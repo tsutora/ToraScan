@@ -1,61 +1,83 @@
-# Tora Basic Rule
+# ToraScan
 
-A technical, compact design system for 16:9 decks. One typeface, one accent, hairlines instead of shadows, tabular numerals everywhere.
+An Android document scanner that turns photos of paper into clean, readable pages and PDFs. Everything runs on the phone: no account, no ads, no watermark, no subscription, and no network permission at all.
+
+Version 1.0.0 (`com.ownscan.scanner_app`) · Android 7.0+ (API 24)
+
+## What it does
+
+**Capture**
+- Single page or a batch: the camera stays open while pages stack up, then they are cropped once.
+- Automatic page-edge detection with 8 draggable corner points; a page can be rotated before cropping.
+- Import from the gallery (JPG/PNG) or from an existing PDF. PDF pages are rasterised at 200 dpi onto a white background, one image per page.
+
+**Clean up**
+- Filters: **As scanned, Enhanced, Lighten, Gray, B&W**.
+- Enhanced flattens uneven lighting and shadows, anchors paper at white, deepens ink and restores fine detail without a white halo around letters. Colour is kept: a pink form stays pink.
+- Filters are chosen per page, with **Apply to all** for the whole document.
+- Output quality: Original (2400 px, q88), High (1800 px, q86), Balanced (1440 px, q82), Small (1080 px, q76).
+
+**Organise**
+- The library is a real folder, `/storage/emulated/0/ToraScan`, readable by any file manager and over USB.
+- Folders, with drag-to-reorder and an "All" sheet that lists every folder.
+- Rename, Copy (duplicates the pages *and* the PDF), Delete, Share.
+- One PDF per document, rebuilt whenever its pages change.
+- Search by file name.
+
+**Edit**
+- Reorder pages, merge a PDF into the document, change the filter per page.
+- Editing works on a draft: files are written only after Save and a confirmation. Backing out discards the draft and leaves the document exactly as it was.
+
+## Flow
+
+- Home (folders + all scans) → folder → document → editor.
+- Capture: camera → crop → preview → name → save → share.
+- Import: Single / Batch / From PDF → crop → preview → name → save.
+
+## Build
+
+Requirements: Flutter 3.x stable, Android SDK 36, JDK 17.
+
+```bash
+flutter pub get
+flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols
+```
+
+Outputs land in `build/app/outputs/flutter-apk/`:
+
+| APK | Size | Target |
+| --- | --- | --- |
+| `app-arm64-v8a-release.apk` | ~8.6 MB | most phones from 2016 onward |
+| `app-armeabi-v7a-release.apk` | ~8.3 MB | older 32-bit devices |
+| `app-x86_64-release.apk` | ~8.8 MB | emulators |
+
+Use `flutter run` for a debug build. Release builds are currently signed with the debug keystore: they install over earlier builds of the same app, but are not ready for Play Store upload.
+
+## Permissions
+
+| Permission | Purpose |
+| --- | --- |
+| `CAMERA` | taking the page photos |
+| `MANAGE_EXTERNAL_STORAGE` (API 30+) / `READ_EXTERNAL_STORAGE` + `WRITE_EXTERNAL_STORAGE` | writing the library into `/storage/emulated/0/ToraScan` |
+| `RECORD_AUDIO` | declared by the camera plugin; the app never records audio |
+| `ACCESS_NETWORK_STATE` | declared by a plugin; no data is sent |
+
+The release manifest has **no `INTERNET` permission**, so the app cannot upload anything.
+
+## Where files go
 
 ```
-design.md              the spec — tokens + rules (read this first)
-tokens.css             the same tokens as CSS variables + primitives
-deck-template.html     7-slide 16:9 template using them (open in a browser)
-fonts/                 Plus Jakarta Sans variable woff2 (Latin subset, self-hosted)
-shots/                 preview renders of the template + deck.pdf
-archive/               retired files (video-era frame.md, palette study)
+/storage/emulated/0/ToraScan/<Folder>/<Document>.pdf    shareable PDF
+/storage/emulated/0/ToraScan/.library/<id>/orig/        untouched captures
+/storage/emulated/0/ToraScan/.library/<id>/pages/       processed pages
+/storage/emulated/0/ToraScan/.library/index.json        library index
 ```
 
-## Use it
+`.library/` is the app's database. Copy it when backing up the folder, and leave it in place while the app is installed.
 
-**Look at the deck**
+## Limits
 
-Open `deck-template.html` in a browser. Arrow keys or the buttons move between slides; `P` prints. Jump straight to a slide with `?slide=5` in the URL. The stage scales to fit any window.
-
-**Export a PDF**
-
-Press `P` in the browser, or headless:
-
-```
-msedge --headless=new --no-pdf-header-footer --print-to-pdf="deck.pdf" "file:///C:/.../deck-template.html"
-```
-
-Each slide becomes one 1920×1080 page.
-
-**Start a new slide**
-
-Copy a `<section class="slide">` block. Keep the structure: `padding: 72px`, content inside `.cols` (12 columns, 20px gutter), `.foot` last. Use the type classes (`.t-display`, `.t-h1` … `.t-micro`) — never raw `font-size`. Use `data-theme="dark"` on a slide to switch it to the dark token set.
-
-**Start a new artifact**
-
-```html
-<link rel="stylesheet" href="tokens.css">
-```
-
-Then use `var(--tora-bg)`, `var(--tora-fg)`, `var(--tora-border)`, `var(--tora-signal)` instead of hex values. If a value you need is missing, it belongs in the spec first — add it to `design.md` and `tokens.css` together.
-
-## The five laws
-
-1. **One accent moment per slide.** Signal Orange is a signal, not a theme. A rule, one active row, one active path, one key figure.
-2. **Hairlines, never shadows.** 1px for content, 1.5px for structure. There is no elevation in this system.
-3. **One typeface, extreme contrast.** Plus Jakarta Sans only; 300 ↔ 800 carries hierarchy. Sentence case, negative tracking on display.
-4. **Numbers are tabular.** Any column, stat, year or page number gets `font-variant-numeric: tabular-nums`.
-5. **The grid is the decoration.** 1920×1080, 72px margin, 12 columns, 8px baseline. Nothing floats between columns.
-
-## Change the system
-
-- **Swap the accent** — change `--tora-accent`, `--tora-accent-text`, `--tora-accent-wash` and the `--tora-accent-100…500` ramp in `tokens.css`, and the matching `colors:` block in `design.md`. Check contrast: accent text on paper must stay ≥ 4.5:1.
-- **Dark** — `data-theme="dark"` on a slide or container. Dark is a whole-slide alternate (cover, section breaks, low-light rooms), never a panel inside a light slide.
-- **Type sizes** — the ramp is in `tokens.css` (`--tora-fs-*`) and `design.md` (`typography:`). Keep at least one 300→800 jump per slide.
-
-## Known gaps
-
-- **Decks only.** No A4 document, social, web UI or print spec yet. Adding one needs a new grid, not a new palette.
-- **Latin subset only.** `fonts/PlusJakartaSans-Variable.woff2` covers basic Latin. Non-Latin glyphs fall back per-glyph; add the relevant Google subset and a second `@font-face` if a deck needs it.
-- **No motion spec.** If decks become animated, that is a separate layer.
-- **The prohibition list is provisional.** "Don't" in `design.md` was written as a default — strike anything you actually want to allow.
+- No OCR and no text search inside a document; search matches file names only.
+- Portrait only.
+- Android only.
+- No cloud sync or accounts, by design.

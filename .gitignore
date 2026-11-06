@@ -14,3 +14,14 @@ scanner_app/android/.kotlin/
 
 # Local machine paths
 scanner_app/android/local.properties
+
+# Design system: kept on this machine, not part of the repository
+/archive/
+/deck-template.html
+/design.md
+/fonts/
+/logo-system-deck.html
+/logo-t-family.html
+/shop-drawing/
+/shots/
+/tokens.css
