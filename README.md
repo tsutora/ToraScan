@@ -8,9 +8,9 @@ Version 1.0.0 (`com.ownscan.scanner_app`) · Android 7.0+ (API 24)
 
 **Image Enhanced**
 - Filters: **As scanned, Enhanced, Lighten, Gray, B&W**.
-- Enhanced flattens uneven lighting and shadows, anchors paper at white, deepens ink and restores fine detail without a white halo around letters. Colour is kept: a pink form stays pink.
-- Filters are chosen per page, with **Apply to all** for the whole document.
-- Output quality: Original (2400 px, q88), High (1800 px, q86), Balanced (1440 px, q82), Small (1080 px, q76).
+- Enhanced flattens uneven lighting and shadows.
+- Filters are chosen per page.
+- Output quality: Original, High, Balanced, Small.
 
 **Organise**
 - The library is a real folder, `/storage/emulated/0/ToraScan`, readable by any file manager and over USB.
@@ -21,13 +21,6 @@ Version 1.0.0 (`com.ownscan.scanner_app`) · Android 7.0+ (API 24)
 
 **Edit**
 - Reorder pages, merge a PDF into the document, change the filter per page.
-- Editing works on a draft: files are written only after Save and a confirmation. Backing out discards the draft and leaves the document exactly as it was.
-
-## Flow
-
-- Home (folders + all scans) → folder → document → editor.
-- Capture: camera → crop → preview → name → save → share.
-- Import: Single / Batch / From PDF → crop → preview → name → save.
 
 ## Build
 
