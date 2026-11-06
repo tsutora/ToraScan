@@ -1,6 +1,6 @@
 # ToraScan
 
-An vibe coded Android document scanner that turns photos of paper into clean, readable pages and PDFs. Everything runs on the phone: no account, no ads, no watermark, no subscription, and no network permission at all.
+A vibe coded Android document scanner that turns photos of paper into clean, readable pages and PDFs. Everything runs on the phone: no account, no ads, no watermark, no subscription, and no network permission at all.
 
 Version 1.0.0 (`com.ownscan.scanner_app`) · Android 7.0+ (API 24)
 
