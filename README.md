@@ -1,17 +1,12 @@
 # ToraScan
 
-An Android document scanner that turns photos of paper into clean, readable pages and PDFs. Everything runs on the phone: no account, no ads, no watermark, no subscription, and no network permission at all.
+An vibe coded Android document scanner that turns photos of paper into clean, readable pages and PDFs. Everything runs on the phone: no account, no ads, no watermark, no subscription, and no network permission at all.
 
 Version 1.0.0 (`com.ownscan.scanner_app`) · Android 7.0+ (API 24)
 
 ## What it does
 
-**Capture**
-- Single page or a batch: the camera stays open while pages stack up, then they are cropped once.
-- Automatic page-edge detection with 8 draggable corner points; a page can be rotated before cropping.
-- Import from the gallery (JPG/PNG) or from an existing PDF. PDF pages are rasterised at 200 dpi onto a white background, one image per page.
-
-**Clean up**
+**Image Enhanced**
 - Filters: **As scanned, Enhanced, Lighten, Gray, B&W**.
 - Enhanced flattens uneven lighting and shadows, anchors paper at white, deepens ink and restores fine detail without a white halo around letters. Colour is kept: a pink form stays pink.
 - Filters are chosen per page, with **Apply to all** for the whole document.
