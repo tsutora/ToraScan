@@ -1,0 +1,16 @@
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.idea/
+.vscode/
+
+# Gradle output under android/ — scanner_app/.gitignore only covers its own /build
+scanner_app/android/build/
+scanner_app/android/.gradle/
+scanner_app/android/.kotlin/
+
+# Local machine paths
+scanner_app/android/local.properties

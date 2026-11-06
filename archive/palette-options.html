@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tora Basic Rule — accent options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@200..800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ui:"Plus Jakarta Sans", system-ui, sans-serif;
+    --page:#ECECE8;
+    --page-ink:#181A1C;
+    --page-muted:#6A6E72;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;padding:40px 32px 80px;background:var(--page);color:var(--page-ink);
+    font-family:var(--ui);font-size:15px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  .doc-head{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-end;justify-content:space-between;border-bottom:1px solid #D6D6D1;padding-bottom:20px;margin-bottom:36px}
+  .doc-head h1{margin:0;font-size:34px;font-weight:800;letter-spacing:-0.035em;line-height:1}
+  .doc-head p{margin:8px 0 0;color:var(--page-muted);max-width:52ch;font-size:14px}
+  .doc-meta{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--page-muted);font-weight:700;text-align:right;line-height:1.9}
+  .opt{margin:0 0 40px}
+  .opt-head{display:flex;align-items:baseline;gap:14px;margin:0 0 12px}
+  .opt-letter{font-size:13px;font-weight:800;width:26px;height:26px;display:grid;place-items:center;border-radius:4px;background:var(--page-ink);color:#fff;flex:none}
+  .opt-name{font-size:17px;font-weight:800;letter-spacing:-0.02em}
+  .opt-note{font-size:13px;color:var(--page-muted)}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:2px;border-radius:6px;overflow:hidden;border:1px solid #D6D6D1}
+  @media (max-width:860px){.pair{grid-template-columns:1fr}}
+  .theme{padding:26px;background:var(--paper);color:var(--ink);position:relative}
+  .theme.dark{background:var(--base);color:var(--ink)}
+  .theme-tag{position:absolute;top:14px;right:16px;font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  .swatches{display:flex;gap:6px;margin:2px 0 22px;flex-wrap:wrap}
+  .sw{width:52px}
+  .sw i{display:block;height:34px;border-radius:4px;border:1px solid rgba(0,0,0,.12)}
+  .theme.dark .sw i{border-color:rgba(255,255,255,.14)}
+  .sw b{display:block;font-size:9px;font-weight:700;letter-spacing:.04em;margin-top:5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .eyebrow{font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .eyebrow:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none}
+  h2.sample{margin:14px 0 10px;font-size:31px;line-height:1.04;letter-spacing:-0.035em;font-weight:800;max-width:24ch}
+  p.sample{margin:0 0 18px;font-size:13.5px;line-height:1.6;color:var(--muted);max-width:40ch}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:0 0 14px}
+  .cell{border:1px solid var(--line);border-radius:4px;padding:10px 12px;background:var(--surface)}
+  .cell .n{font-size:22px;font-weight:800;letter-spacing:-0.03em;font-variant-numeric:tabular-nums;line-height:1.1}
+  .cell .l{font-size:9px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin-top:4px}
+  .cell.on{background:var(--accent);border-color:var(--accent);color:var(--accent-on)}
+  .cell.on .l{color:var(--accent-on);opacity:.8}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:4px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  .chip.a{background:var(--accent);border-color:var(--accent);color:var(--accent-on)}
+  .ratio{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);font-size:10px;letter-spacing:.06em;color:var(--muted);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+  .ratio b{color:var(--ink);font-weight:700}
+  .pass{color:#1E7A46;font-weight:700}
+  .fail{color:#B4321C;font-weight:700}
+  .theme.dark .pass{color:#6BD69A}
+  .theme.dark .fail{color:#FF8A72}
+  footer{margin-top:48px;padding-top:18px;border-top:1px solid #D6D6D1;font-size:12px;color:var(--page-muted);display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="doc-head">
+    <div>
+      <h1>Tora Basic Rule</h1>
+      <p>Four accent directions for a technical, compact system. Same type, same grid, same radii — only the signal color changes. Pick one; everything else in the spec is already decided.</p>
+    </div>
+    <div class="doc-meta">Plus Jakarta Sans 200–800<br>Light + dark<br>Compact · precise</div>
+  </div>
+
+  <!-- A -->
+  <section class="opt">
+    <div class="opt-head">
+      <span class="opt-letter">A</span>
+      <span class="opt-name">Signal Orange</span>
+      <span class="opt-note">safety-signal warmth · engineering drawings · unmistakable in a deck</span>
+    </div>
+    <div class="pair">
+      <div class="theme" style="--paper:#F7F7F4;--surface:#FFFFFF;--ink:#14161A;--muted:#5B6067;--line:#E1E1DC;--accent:#E4552B;--accent-on:#FFFFFF;--accent-text:#B93E19">
+        <span class="theme-tag">Light</span>
+        <div class="swatches">
+          <div class="sw"><i style="background:#F7F7F4"></i><b>F7F7F4</b></div>
+          <div class="sw"><i style="background:#FFFFFF"></i><b>FFFFFF</b></div>
+          <div class="sw"><i style="background:#14161A"></i><b>14161A</b></div>
+          <div class="sw"><i style="background:#5B6067"></i><b>5B6067</b></div>
+          <div class="sw"><i style="background:#E1E1DC"></i><b>E1E1DC</b></div>
+          <div class="sw"><i style="background:#E4552B"></i><b>E4552B</b></div>
+        </div>
+        <div class="eyebrow">Section 04 / Systems</div>
+        <h2 class="sample">Interfaces, documented.</h2>
+        <p class="sample">Specifications, audits and design systems — written to be executed, not admired.</p>
+        <div class="row">
+          <div class="cell"><div class="n">128</div><div class="l">Components</div></div>
+          <div class="cell on"><div class="n">12</div><div class="l">Live systems</div></div>
+          <div class="cell"><div class="n">.04</div><div class="l">Contrast min</div></div>
+        </div>
+        <div class="chips"><span class="chip a">Design ops</span><span class="chip">Audit</span><span class="chip">Tokens</span></div>
+        <div class="ratio"><span>accent text on paper <b class="r" data-fg="#B93E19" data-bg="#F7F7F4">—</b></span><span>white on accent <b class="r" data-fg="#FFFFFF" data-bg="#E4552B">—</b></span></div>
+      </div>
+      <div class="theme dark" style="--base:#0F1113;--surface:#171A1D;--ink:#F1F1EE;--muted:#9BA1A8;--line:#282C31;--accent:#FF7A4E;--accent-on:#1A0E08;--accent-text:#FF8C66">
+        <span class="theme-tag">Dark</span>
+        <div class="swatches">
+          <div class="sw"><i style="background:#0F1113"></i><b>0F1113</b></div>
+          <div class="sw"><i style="background:#171A1D"></i><b>171A1D</b></div>
+          <div class="sw"><i style="background:#F1F1EE"></i><b>F1F1EE</b></div>
+          <div class="sw"><i style="background:#9BA1A8"></i><b>9BA1A8</b></div>
+          <div class="sw"><i style="background:#282C31"></i><b>282C31</b></div>
+          <div class="sw"><i style="background:#FF7A4E"></i><b>FF7A4E</b></div>
+        </div>
+        <div class="eyebrow">Section 04 / Systems</div>
+        <h2 class="sample">Interfaces, documented.</h2>
+        <p class="sample">Specifications, audits and design systems — written to be executed, not admired.</p>
+        <div class="row">
+          <div class="cell"><div class="n">128</div><div class="l">Components</div></div>
+          <div class="cell on"><div class="n">12</div><div class="l">Live systems</div></div>
+          <div class="cell"><div class="n">.04</div><div class="l">Contrast min</div></div>
+        </div>
+        <div class="chips"><span class="chip a">Design ops</span><span class="chip">Audit</span><span class="chip">Tokens</span></div>
+        <div class="ratio"><span>accent text on base <b class="r" data-fg="#FF8C66" data-bg="#0F1113">—</b></span><span>base on accent <b class="r" data-fg="#1A0E08" data-bg="#FF7A4E">—</b></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- B -->
+  <section class="opt">
+    <div class="opt-head">
+      <span class="opt-letter">B</span>
+      <span class="opt-name">Blueprint Indigo</span>
+      <span class="opt-note">product-grade precision · calm authority · safest for client work</span>
+    </div>
+    <div class="pair">
+      <div class="theme" style="--paper:#F6F7F9;--surface:#FFFFFF;--ink:#111318;--muted:#565D68;--line:#DFE2E7;--accent:#2B49D8;--accent-on:#FFFFFF;--accent-text:#2039B8">
+        <span class="theme-tag">Light</span>
+        <div class="swatches">
+          <div class="sw"><i style="background:#F6F7F9"></i><b>F6F7F9</b></div>
+          <div class="sw"><i style="background:#FFFFFF"></i><b>FFFFFF</b></div>
+          <div class="sw"><i style="background:#111318"></i><b>111318</b></div>
+          <div class="sw"><i style="background:#565D68"></i><b>565D68</b></div>
+          <div class="sw"><i style="background:#DFE2E7"></i><b>DFE2E7</b></div>
+          <div class="sw"><i style="background:#2B49D8"></i><b>2B49D8</b></div>
+        </div>
+        <div class="eyebrow">Section 04 / Systems</div>
+        <h2 class="sample">Interfaces, documented.</h2>
+        <p class="sample">Specifications, audits and design systems — written to be executed, not admired.</p>
+        <div class="row">
+          <div class="cell"><div class="n">128</div><div class="l">Components</div></div>
+          <div class="cell on"><div class="n">12</div><div class="l">Live systems</div></div>
+          <div class="cell"><div class="n">.04</div><div class="l">Contrast min</div></div>
+        </div>
+        <div class="chips"><span class="chip a">Design ops</span><span class="chip">Audit</span><span class="chip">Tokens</span></div>
+        <div class="ratio"><span>accent text on paper <b class="r" data-fg="#2039B8" data-bg="#F6F7F9">—</b></span><span>white on accent <b class="r" data-fg="#FFFFFF" data-bg="#2B49D8">—</b></span></div>
+      </div>
+      <div class="theme dark" style="--base:#0E1015;--surface:#151922;--ink:#EEF0F4;--muted:#98A0AE;--line:#252B36;--accent:#6E8BFF;--accent-on:#0A0F1E;--accent-text:#8CA3FF">
+        <span class="theme-tag">Dark</span>
+        <div class="swatches">
+          <div class="sw"><i style="background:#0E1015"></i><b>0E1015</b></div>
+          <div class="sw"><i style="background:#151922"></i><b>151922</b></div>
+          <div class="sw"><i style="background:#EEF0F4"></i><b>EEF0F4</b></div>
+          <div class="sw"><i style="background:#98A0AE"></i><b>98A0AE</b></div>
+          <div class="sw"><i style="background:#252B36"></i><b>252B36</b></div>
+          <div class="sw"><i style="background:#6E8BFF"></i><b>6E8BFF</b></div>
+        </div>
+        <div class="eyebrow">Section 04 / Systems</div>
+        <h2 class="sample">Interfaces, documented.</h2>
+        <p class="sample">Specifications, audits and design systems — written to be executed, not admired.</p>
+        <div class="row">
+          <div class="cell"><div class="n">128</div><div class="l">Components</div></div>
+          <div class="cell on"><div class="n">12</div><div class="l">Live systems</div></div>
+          <div class="cell"><div class="n">.04</div><div class="l">Contrast min</div></div>
+        </div>
+        <div class="chips"><span class="chip a">Design ops</span><span class="chip">Audit</span><span class="chip">Tokens</span></div>
+        <div class="ratio"><span>accent text on base <b class="r" data-fg="#8CA3FF" data-bg="#0E1015">—</b></span><span>base on accent <b class="r" data-fg="#0A0F1E" data-bg="#6E8BFF">—</b></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- C -->
+  <section class="opt">
+    <div class="opt-head">
+      <span class="opt-letter">C</span>
+      <span class="opt-name">Acid Lime</span>
+      <span class="opt-note">tooling / terminal energy · high recall · only works if used sparingly</span>
+    </div>
+    <div class="pair">
+      <div class="theme" style="--paper:#FAFAF7;--surface:#FFFFFF;--ink:#16181A;--muted:#5C6166;--line:#E4E4DE;--accent:#C8F14B;--accent-on:#181B12;--accent-text:#55700A">
+        <span class="theme-tag">Light</span>
+        <div class="swatches">
+          <div class="sw"><i style="background:#FAFAF7"></i><b>FAFAF7</b></div>
+          <div class="sw"><i style="background:#FFFFFF"></i><b>FFFFFF</b></div>
+          <div class="sw"><i style="background:#16181A"></i><b>16181A</b></div>
+          <div class="sw"><i style="background:#5C6166"></i><b>5C6166</b></div>
+          <div class="sw"><i style="background:#E4E4DE"></i><b>E4E4DE</b></div>
+          <div class="sw"><i style="background:#C8F14B"></i><b>C8F14B</b></div>
+        </div>
+        <div class="eyebrow">Section 04 / Systems</div>
+        <h2 class="sample">Interfaces, documented.</h2>
+        <p class="sample">Specifications, audits and design systems — written to be executed, not admired.</p>
+        <div class="row">
+          <div class="cell"><div class="n">128</div><div class="l">Components</div></div>
+          <div class="cell on"><div class="n">12</div><div class="l">Live systems</div></div>
+          <div class="cell"><div class="n">.04</div><div class="l">Contrast min</div></div>
+        </div>
+        <div class="chips"><span class="chip a">Design ops</span><span class="chip">Audit</span><span class="chip">Tokens</span></div>
+        <div class="ratio"><span>accent text on paper <b class="r" data-fg="#55700A" data-bg="#FAFAF7">—</b></span><span>ink on accent <b class="r" data-fg="#181B12" data-bg="#C8F14B">—</b></span></div>
+      </div>
+      <div class="theme dark" style="--base:#0D0F0E;--surface:#141715;--ink:#F0F2ED;--muted:#98A099;--line:#242A26;--accent:#D4FF5C;--accent-on:#12160A;--accent-text:#D4FF5C">
+        <span class="theme-tag">Dark</span>
+        <div class="swatches">
+          <div class="sw"><i style="background:#0D0F0E"></i><b>0D0F0E</b></div>
+          <div class="sw"><i style="background:#141715"></i><b>141715</b></div>
+          <div class="sw"><i style="background:#F0F2ED"></i><b>F0F2ED</b></div>
+          <div class="sw"><i style="background:#98A099"></i><b>98A099</b></div>
+          <div class="sw"><i style="background:#242A26"></i><b>242A26</b></div>
+          <div class="sw"><i style="background:#D4FF5C"></i><b>D4FF5C</b></div>
+        </div>
+        <div class="eyebrow">Section 04 / Systems</div>
+        <h2 class="sample">Interfaces, documented.</h2>
+        <p class="sample">Specifications, audits and design systems — written to be executed, not admired.</p>
+        <div class="row">
+          <div class="cell"><div class="n">128</div><div class="l">Components</div></div>
+          <div class="cell on"><div class="n">12</div><div class="l">Live systems</div></div>
+          <div class="cell"><div class="n">.04</div><div class="l">Contrast min</div></div>
+        </div>
+        <div class="chips"><span class="chip a">Design ops</span><span class="chip">Audit</span><span class="chip">Tokens</span></div>
+        <div class="ratio"><span>accent text on base <b class="r" data-fg="#D4FF5C" data-bg="#0D0F0E">—</b></span><span>base on accent <b class="r" data-fg="#12160A" data-bg="#D4FF5C">—</b></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- D -->
+  <section class="opt">
+    <div class="opt-head">
+      <span class="opt-letter">D</span>
+      <span class="opt-name">Graphite &amp; Vermilion</span>
+      <span class="opt-note">monochrome discipline · red used as a stamp, ~2% of any surface</span>
+    </div>
+    <div class="pair">
+      <div class="theme" style="--paper:#F7F6F3;--surface:#FFFFFF;--ink:#17181A;--muted:#5A5C60;--line:#DEDCD6;--accent:#C93B24;--accent-on:#FFFFFF;--accent-text:#AD2F1A">
+        <span class="theme-tag">Light</span>
+        <div class="swatches">
+          <div class="sw"><i style="background:#F7F6F3"></i><b>F7F6F3</b></div>
+          <div class="sw"><i style="background:#FFFFFF"></i><b>FFFFFF</b></div>
+          <div class="sw"><i style="background:#17181A"></i><b>17181A</b></div>
+          <div class="sw"><i style="background:#5A5C60"></i><b>5A5C60</b></div>
+          <div class="sw"><i style="background:#DEDCD6"></i><b>DEDCD6</b></div>
+          <div class="sw"><i style="background:#C93B24"></i><b>C93B24</b></div>
+        </div>
+        <div class="eyebrow">Section 04 / Systems</div>
+        <h2 class="sample">Interfaces, documented.</h2>
+        <p class="sample">Specifications, audits and design systems — written to be executed, not admired.</p>
+        <div class="row">
+          <div class="cell"><div class="n">128</div><div class="l">Components</div></div>
+          <div class="cell on"><div class="n">12</div><div class="l">Live systems</div></div>
+          <div class="cell"><div class="n">.04</div><div class="l">Contrast min</div></div>
+        </div>
+        <div class="chips"><span class="chip a">Design ops</span><span class="chip">Audit</span><span class="chip">Tokens</span></div>
+        <div class="ratio"><span>accent text on paper <b class="r" data-fg="#AD2F1A" data-bg="#F7F6F3">—</b></span><span>white on accent <b class="r" data-fg="#FFFFFF" data-bg="#C93B24">—</b></span></div>
+      </div>
+      <div class="theme dark" style="--base:#111110;--surface:#191918;--ink:#EDECE8;--muted:#96948E;--line:#2A2A27;--accent:#FF6247;--accent-on:#180704;--accent-text:#FF7A63">
+        <span class="theme-tag">Dark</span>
+        <div class="swatches">
+          <div class="sw"><i style="background:#111110"></i><b>111110</b></div>
+          <div class="sw"><i style="background:#191918"></i><b>191918</b></div>
+          <div class="sw"><i style="background:#EDECE8"></i><b>EDECE8</b></div>
+          <div class="sw"><i style="background:#96948E"></i><b>96948E</b></div>
+          <div class="sw"><i style="background:#2A2A27"></i><b>2A2A27</b></div>
+          <div class="sw"><i style="background:#FF6247"></i><b>FF6247</b></div>
+        </div>
+        <div class="eyebrow">Section 04 / Systems</div>
+        <h2 class="sample">Interfaces, documented.</h2>
+        <p class="sample">Specifications, audits and design systems — written to be executed, not admired.</p>
+        <div class="row">
+          <div class="cell"><div class="n">128</div><div class="l">Components</div></div>
+          <div class="cell on"><div class="n">12</div><div class="l">Live systems</div></div>
+          <div class="cell"><div class="n">.04</div><div class="l">Contrast min</div></div>
+        </div>
+        <div class="chips"><span class="chip a">Design ops</span><span class="chip">Audit</span><span class="chip">Tokens</span></div>
+        <div class="ratio"><span>accent text on base <b class="r" data-fg="#FF7A63" data-bg="#111110">—</b></span><span>base on accent <b class="r" data-fg="#180704" data-bg="#FF6247">—</b></span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Tora Basic Rule — accent study · Plus Jakarta Sans · light + dark</span>
+    <span>Ratios computed live (WCAG 2.1) · AA text = 4.5:1 · AA large/UI = 3:1</span>
+  </footer>
+</div>
+
+<script>
+  function lum(hex){
+    const m=hex.replace('#','');
+    const v=[0,2,4].map(i=>parseInt(m.slice(i,i+2),16)/255)
+      .map(c=>c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4));
+    return 0.2126*v[0]+0.7152*v[1]+0.0722*v[2];
+  }
+  function ratio(a,b){
+    const l1=lum(a), l2=lum(b);
+    return ((Math.max(l1,l2)+0.05)/(Math.min(l1,l2)+0.05));
+  }
+  document.querySelectorAll('.r').forEach(el=>{
+    const r=ratio(el.dataset.fg, el.dataset.bg);
+    const pass=r>=4.5;
+    el.textContent=r.toFixed(2)+':1';
+    el.classList.add(pass?'pass':'fail');
+  });
+</script>
+</body>
+</html>

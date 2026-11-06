@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tora Basic Rule — 16:9 deck template</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Preview fallback only. For renders/PDF, self-host ./fonts/PlusJakartaSans-Variable.woff2 (see design.md). -->
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@200..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* ---- screen chrome (not part of the design system) ------------------- */
+  html, body { height: 100%; }
+  body { background: #0B0C0D; overflow: hidden; }
+
+  .viewport {
+    position: fixed; inset: 0;
+    overflow: hidden;
+  }
+  #stage {
+    position: absolute; top: 0; left: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: 0 0;
+    background: var(--tora-paper);
+  }
+
+  /* ---- slide ----------------------------------------------------------- */
+  .slide {
+    position: absolute; inset: 0;
+    width: 1920px; height: 1080px;
+    padding: var(--tora-margin);
+    display: none;
+    flex-direction: column;
+    background: var(--tora-bg);
+    color: var(--tora-fg);
+  }
+  .slide.is-active { display: flex; }
+
+  .cols { display: grid; grid-template-columns: repeat(12, 1fr); gap: var(--tora-gutter); }
+  .grow { flex: 1 1 auto; }
+  .grow-sm { flex: 0.6 1 auto; }
+
+  .foot {
+    padding-top: 14px;
+    border-top: var(--tora-stroke) solid var(--tora-border);
+  }
+
+  .center-body { margin-block: auto; }
+
+  .stack-24 > * { margin: 0; }
+  .stack-24 > * + * { margin-top: 24px; }
+
+  .cover-head { display: flex; align-items: center; gap: 16px; }
+  .cover-title { max-width: 14ch; }
+  .cover-lede { margin: 28px 0 0; max-width: 30ch; }
+
+  .kicker { display: flex; align-items: center; gap: 10px; }
+  .kicker:before {
+    content: ""; width: 8px; height: 8px; flex: none;
+    background: var(--tora-signal);
+  }
+
+  .stack-24 > * + * { margin-top: 24px; }
+  .stack-16 > * + * { margin-top: 16px; }
+
+  .card-list { display: grid; gap: 0; }
+  .card-list .row {
+    display: grid; grid-template-columns: 24px 1fr; gap: 12px;
+    align-items: baseline;
+    padding: 12px 0;
+    border-top: var(--tora-stroke) solid var(--tora-border);
+  }
+  .card-list .row:last-child { border-bottom: var(--tora-stroke) solid var(--tora-border); }
+  .card-list .row b {
+    font-size: var(--tora-fs-micro); font-weight: var(--tora-fw-bold);
+    letter-spacing: 0.120em; color: var(--tora-fg-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- diagram --------------------------------------------------------- */
+  .diagram { width: 100%; height: auto; display: block; }
+  .diagram .node { fill: var(--tora-surface); stroke: var(--tora-fg); stroke-width: 1.5; }
+  .diagram .node--active { stroke: var(--tora-signal); }
+  .diagram .wire { stroke: var(--tora-border-strong); stroke-width: 1.5; fill: none; }
+  .diagram .wire--active { stroke: var(--tora-signal); }
+  .diagram .head { fill: var(--tora-border-strong); }
+  .diagram .head--active { fill: var(--tora-signal); }
+  .diagram text {
+    fill: var(--tora-fg);
+    font-family: var(--tora-font);
+    font-size: 19px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  }
+  .diagram .sub { fill: var(--tora-fg-faint); font-size: 15px; letter-spacing: 0.10em; }
+
+  /* ---- UI -------------------------------------------------------------- */
+  .ui {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 14px 24px;
+    background: rgba(11,12,13,.92);
+    border-top: 1px solid #22262A;
+    color: #9BA1A8;
+    font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+  }
+  .ui .grp { display: flex; align-items: center; gap: 8px; }
+  .ui button {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    border: 1px solid #2A2E33; border-radius: 4px;
+    background: #14171A; color: #F1F1EE;
+    font-family: var(--tora-font); font-size: 14px; cursor: pointer;
+  }
+  .ui button:hover { border-color: #4A5057; }
+  .ui .page { color: #F1F1EE; font-variant-numeric: tabular-nums; }
+
+  /* ---- print / PDF ----------------------------------------------------- */
+  @media print {
+    body { overflow: visible; background: #FFFFFF; }
+    .viewport { position: static; display: block; padding: 0; overflow: visible; }
+    #stage { position: relative; width: 1920px; height: auto; transform: none !important; }
+    .slide {
+      position: relative; display: flex !important;
+      break-after: page; page-break-after: always;
+    }
+    .slide:last-child { break-after: auto; page-break-after: auto; }
+    .ui { display: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="viewport">
+  <div id="stage">
+
+    <!-- 01 · Cover ------------------------------------------------------- -->
+    <section class="slide is-active" aria-label="Cover">
+      <div class="cover-head">
+        <div class="tora-monogram is-48" aria-hidden="true">T</div>
+        <div>
+          <div class="t-label">Tora Basic Rule</div>
+          <div class="t-micro faint" style="margin-top:4px">Deck template · v0.1</div>
+        </div>
+      </div>
+
+      <div class="grow"></div>
+
+      <h1 class="t-display cover-title">Systems,<br>specified.</h1>
+      <p class="t-lede soft cover-lede">One grid, one accent, no decoration. Everything a technical deck needs and nothing it does not.</p>
+      <div class="tora-rule--signal" style="margin-top:40px"></div>
+
+      <div class="grow-sm"></div>
+
+      <div class="foot">
+        <div class="tora-meta">
+          <span>1920 × 1080 · Plus Jakarta Sans</span>
+          <span>01 / 07</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 · Section divider (dark) -------------------------------------- -->
+    <section class="slide" data-theme="dark" aria-label="Section divider">
+      <div class="tora-meta" style="justify-content:flex-end">
+        <span>02 / 07</span>
+      </div>
+
+      <div class="grow"></div>
+
+      <div class="cols" style="align-items:start">
+        <div style="grid-column:1 / span 3">
+          <div class="t-display signal">02</div>
+        </div>
+        <div style="grid-column:4 / span 9">
+          <div class="t-label faint">Section — Structure</div>
+          <h2 class="t-h1" style="margin-top:12px">Density without noise</h2>
+          <p class="t-body-sm soft" style="margin:16px 0 0; max-width:44ch">Tables and diagrams carry the argument. The grid is what keeps them legible at distance.</p>
+        </div>
+      </div>
+
+      <div class="grow"></div>
+    </section>
+
+    <!-- 03 · Statement ---------------------------------------------------- -->
+    <section class="slide" aria-label="Statement">
+      <div class="kicker">
+        <span class="t-label faint">Principle 01</span>
+      </div>
+
+      <div class="grow"></div>
+
+      <div class="cols">
+        <div style="grid-column:1 / span 10">
+          <h2 class="t-h1" style="font-size:104px;line-height:0.98;letter-spacing:-0.04em">Every edge lands on a column.</h2>
+          <p class="t-lede soft" style="margin:32px 0 0; max-width:36ch">Alignment is the only ornament this system allows — so it has to be exact.</p>
+          <div class="tora-rule--signal" style="margin-top:40px"></div>
+        </div>
+      </div>
+
+      <div class="grow-sm"></div>
+
+      <div class="foot">
+        <div class="tora-meta">
+          <span>Tora Basic Rule — Structure</span>
+          <span>03 / 07</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 · Two-column content ------------------------------------------ -->
+    <section class="slide" aria-label="Two-column content">
+      <div class="center-body">
+        <div class="cols">
+          <div style="grid-column:1 / span 9">
+            <div class="kicker" style="margin-bottom:16px"><span class="t-label faint">Method</span></div>
+            <h2 class="t-h2">Structure first.<br>Decoration last.</h2>
+          </div>
+        </div>
+
+        <div class="cols" style="margin-top:48px; align-items:start">
+          <div style="grid-column:1 / span 7" class="stack-24">
+            <p class="t-body" style="max-width:58ch">The slide is a 12-column field with a fixed 72px margin. Content is placed on columns, separated by 1px hairlines, and never centered.</p>
+            <p class="t-body soft" style="max-width:58ch">Two type sizes do most of the work: one statement at 700–800, one support line at 300–400. Anything else is data.</p>
+            <div>
+              <h3 class="t-h3" style="font-size:24px">What stays out</h3>
+              <p class="t-body-sm soft" style="margin:8px 0 0; max-width:58ch">Shadows, gradients, icon sets, and stock imagery are not available at any level of this system.</p>
+            </div>
+          </div>
+
+          <div style="grid-column:8 / span 5">
+            <div class="tora-card">
+              <div class="t-label faint">Rules in force</div>
+              <div class="card-list" style="margin-top:12px">
+                <div class="row"><b>01</b><span class="t-body-sm">One accent moment per slide</span></div>
+                <div class="row"><b>02</b><span class="t-body-sm">Hairlines, never shadows</span></div>
+                <div class="row"><b>03</b><span class="t-body-sm">Tabular numerals in every column</span></div>
+                <div class="row"><b>04</b><span class="t-body-sm">Pin every render to the fixed canvas</span></div>
+              </div>
+              <div style="margin-top:20px; display:flex; gap:8px; flex-wrap:wrap">
+                <span class="tora-tag tora-tag--signal">Enforced</span>
+                <span class="tora-tag">Draft</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="foot">
+        <div class="tora-meta">
+          <span>Tora Basic Rule — Method</span>
+          <span>04 / 07</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 05 · Data table --------------------------------------------------- -->
+    <section class="slide" aria-label="Data table">
+      <div class="center-body">
+        <div class="kicker" style="margin-bottom:14px"><span class="t-label faint">Inventory</span></div>
+        <h2 class="t-h2">Components in review</h2>
+
+        <div style="margin-top:32px">
+        <table class="tora-table">
+          <thead>
+            <tr>
+              <th style="width:30%">Component</th>
+              <th style="width:20%">Owner</th>
+              <th style="width:12%">State</th>
+              <th class="num" style="width:12%">Coverage</th>
+              <th class="num" style="width:10%">Δ 30d</th>
+              <th class="num" style="width:16%">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Button / primary</td><td class="soft">Design system</td><td>Live</td>
+              <td class="num">N%</td><td class="num">±N</td><td class="num">YYYY-MM-DD</td>
+            </tr>
+            <tr>
+              <td>Input / text</td><td class="soft">Design system</td><td>Live</td>
+              <td class="num">N%</td><td class="num">±N</td><td class="num">YYYY-MM-DD</td>
+            </tr>
+            <tr class="is-active">
+              <td>Table / data</td><td class="soft">Design system</td><td>Draft</td>
+              <td class="num">N%</td><td class="num">±N</td><td class="num">YYYY-MM-DD</td>
+            </tr>
+            <tr>
+              <td>Navigation / rail</td><td class="soft">Product</td><td>Live</td>
+              <td class="num">N%</td><td class="num">±N</td><td class="num">YYYY-MM-DD</td>
+            </tr>
+            <tr>
+              <td>Chart / line</td><td class="soft">Data</td><td>Review</td>
+              <td class="num">N%</td><td class="num">±N</td><td class="num">YYYY-MM-DD</td>
+            </tr>
+            <tr>
+              <td>Modal / confirm</td><td class="soft">Product</td><td>Draft</td>
+              <td class="num">N%</td><td class="num">±N</td><td class="num">YYYY-MM-DD</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="t-body-sm faint" style="margin:16px 0 0">Sample rows. Every figure is a placeholder until it traces to a source — see design.md, “Numerals &amp; Claims”.</p>
+        </div>
+      </div>
+
+      <div class="foot">
+        <div class="tora-meta">
+          <span>Tora Basic Rule — Inventory</span>
+          <span>05 / 07</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 06 · Diagram ------------------------------------------------------ -->
+    <section class="slide" aria-label="Diagram">
+      <div class="center-body">
+        <div class="kicker" style="margin-bottom:14px"><span class="t-label faint">Flow</span></div>
+        <h2 class="t-h3">Pipeline, as specified</h2>
+
+        <div style="margin-top:40px">
+          <svg class="diagram" viewBox="0 0 1240 470" width="1240" height="470" role="img" aria-label="Five-node pipeline with one active path">
+            <!-- row 1 -->
+            <rect class="node" x="0" y="30" width="230" height="96" rx="4"></rect>
+            <text x="115" y="78" text-anchor="middle" dominant-baseline="middle">01 · Input</text>
+
+            <rect class="node" x="320" y="30" width="230" height="96" rx="4"></rect>
+            <text x="435" y="78" text-anchor="middle" dominant-baseline="middle">02 · Parse</text>
+
+            <rect class="node" x="640" y="30" width="230" height="96" rx="4"></rect>
+            <text x="755" y="78" text-anchor="middle" dominant-baseline="middle">03 · Model</text>
+
+            <!-- row 2 -->
+            <rect class="node node--active" x="640" y="290" width="230" height="96" rx="4"></rect>
+            <text x="755" y="338" text-anchor="middle" dominant-baseline="middle">04 · Render</text>
+
+            <rect class="node" x="960" y="290" width="230" height="96" rx="4"></rect>
+            <text x="1075" y="338" text-anchor="middle" dominant-baseline="middle">05 · Ship</text>
+
+            <!-- wires -->
+            <line class="wire" x1="230" y1="78" x2="312" y2="78"></line>
+            <path class="head" d="M312,73 L320,78 L312,83 Z"></path>
+
+            <line class="wire" x1="550" y1="78" x2="632" y2="78"></line>
+            <path class="head" d="M632,73 L640,78 L632,83 Z"></path>
+
+            <line class="wire wire--active" x1="755" y1="126" x2="755" y2="282"></line>
+            <path class="head head--active" d="M750,282 L755,290 L760,282 Z"></path>
+
+            <line class="wire" x1="870" y1="338" x2="952" y2="338"></line>
+            <path class="head" d="M952,333 L960,338 L952,343 Z"></path>
+
+            <!-- annotations -->
+            <text class="sub" x="0" y="180">raw</text>
+            <text class="sub" x="640" y="180">spec</text>
+            <text class="sub" x="1240" y="440" text-anchor="end">accent = active path</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="foot">
+        <div class="tora-meta">
+          <span>Tora Basic Rule — Flow</span>
+          <span>06 / 07</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 07 · Closing (dark) ---------------------------------------------- -->
+    <section class="slide" data-theme="dark" aria-label="Closing">
+      <div class="grow"></div>
+
+      <h2 class="t-display" style="max-width:16ch">Start with<br>the rule.</h2>
+      <p class="t-body soft" style="margin:28px 0 0; max-width:34ch">Template, tokens and rules live together. Change the tokens, not the layout.</p>
+      <div class="tora-rule--signal" style="margin-top:40px"></div>
+
+      <div class="grow-sm"></div>
+
+      <div style="display:flex; align-items:end; justify-content:space-between">
+        <div class="tora-meta">
+          <span>hello@tora.studio · tora.studio</span>
+        </div>
+        <div class="tora-monogram tora-monogram--outline is-32" aria-hidden="true">T</div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div class="ui no-print">
+  <div class="grp">
+    <span>Tora Basic Rule</span>
+    <span style="color:#4A5057">/</span>
+    <span>16:9 template</span>
+  </div>
+  <div class="grp">
+    <button id="prev" aria-label="Previous slide">←</button>
+    <span class="page" id="counter">01 / 07</span>
+    <button id="next" aria-label="Next slide">→</button>
+  </div>
+</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const counter = document.getElementById('counter');
+  const stage = document.getElementById('stage');
+  let i = 0;
+
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function show(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('is-active', k === i));
+    counter.textContent = pad(i + 1) + ' / ' + pad(slides.length);
+  }
+
+  function fit() {
+    const uiH = 72;                                  // bottom bar
+    const s = Math.min(window.innerWidth / 1920, (window.innerHeight - uiH) / 1080, 1);
+    const x = (window.innerWidth - 1920 * s) / 2;
+    const y = ((window.innerHeight - uiH) - 1080 * s) / 2;
+    stage.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
+  }
+
+  document.getElementById('prev').addEventListener('click', () => show(i - 1));
+  document.getElementById('next').addEventListener('click', () => show(i + 1));
+
+  window.addEventListener('keydown', (e) => {
+    if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); show(i + 1); }
+    if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+    if (e.key === 'Home') { e.preventDefault(); show(0); }
+    if (e.key === 'End') { e.preventDefault(); show(slides.length - 1); }
+    if (e.key.toLowerCase() === 'p') { window.print(); }
+  });
+
+  const start = parseInt(new URLSearchParams(location.search).get('slide'), 10);
+
+  window.addEventListener('resize', fit);
+  fit();
+  show(Number.isFinite(start) ? start - 1 : 0);
+</script>
+</body>
+</html>
