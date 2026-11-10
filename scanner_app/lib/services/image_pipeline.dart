@@ -514,16 +514,23 @@ class ImagePipeline {
     final Int32List gainB = Int32List(cells);
     for (int i = 0; i < cells; i++) {
       final int backgroundLuma = background[i].clamp(1, 255);
-      final double factor = (target / backgroundLuma).clamp(0.55, 2.8);
+      // The lift is exact when it is not clamped: `target / background` puts a
+      // shadowed cell on the same white as the lit ones, which is the whole
+      // point of flattening. The clamp only limits how far sensor noise can be
+      // amplified. 2.8 left the deepest corner of a page at ~175 instead of
+      // white, so the limit is raised; colour is held back separately below.
+      final double factor = (target / backgroundLuma).clamp(0.55, 4.0);
       lift[i] = (factor * 256).round();
       // Chroma is lifted *less* than luminance, and only when lifting: in a
-      // shadow the exposure can be raised 2.8x, and sensor colour noise would
-      // be raised with it. Keeping the hue and losing a little saturation in
+      // shadow the exposure can be raised 4x, and sensor colour noise would be
+      // raised with it. Keeping the hue and losing a little saturation in
       // shadow is what a real capture pipeline does, and it is invisible next
-      // to coloured blotches on what should be grey paper.
+      // to coloured blotches on what should be grey paper. The extra 0.6 power
+      // plus a hard 1.9 cap means the deepest shadow still gains brightness
+      // without gaining enough colour gain to make noise visible.
       final double chromaFactor = factor <= 1
           ? factor
-          : math.pow(factor, 0.6).toDouble();
+          : math.min(math.pow(factor, 0.6).toDouble(), 1.9);
       chromaLift[i] = (chromaFactor * 256).round();
 
       final int red = (background[i] + castR[i]).clamp(24, 255);
@@ -538,13 +545,16 @@ class ImagePipeline {
       double confidence = ((60 - saturation) / 22).clamp(0.0, 1.0);
       confidence *= _pigmentConfidence(red, green, blue);
       // A dark background cannot be measured reliably enough to correct its
-      // colour: fading the correction out there is what stops noise being
-      // painted into the shadow.
-      confidence *= ((bgLuma - 45) / 50).clamp(0.0, 1.0);
+      // colour, so the correction still fades out downwards -- but the estimate
+      // is a mean over the paper-like pixels of a cell rather than a per-channel
+      // maximum, so it stays usable much deeper into a shadow than it used to.
+      // Fading from 30 rather than 45 is what takes the warm cast out of a
+      // corner shadow that the 4x lift has already brought up to near white.
+      confidence *= ((bgLuma - 30) / 45).clamp(0.0, 1.0);
 
-      final double gR = (1 + (bgLuma / red - 1) * confidence).clamp(0.86, 1.16);
-      final double gG = (1 + (bgLuma / green - 1) * confidence).clamp(0.86, 1.16);
-      final double gB = (1 + (bgLuma / blue - 1) * confidence).clamp(0.86, 1.16);
+      final double gR = (1 + (bgLuma / red - 1) * confidence).clamp(0.84, 1.24);
+      final double gG = (1 + (bgLuma / green - 1) * confidence).clamp(0.84, 1.24);
+      final double gB = (1 + (bgLuma / blue - 1) * confidence).clamp(0.84, 1.24);
       gainR[i] = (gR * 256).round();
       gainG[i] = (gG * 256).round();
       gainB[i] = (gB * 256).round();

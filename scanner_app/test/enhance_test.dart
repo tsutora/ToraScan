@@ -549,6 +549,82 @@ void main() {
     }
   });
 
+  test('auto lifts a deep corner shadow all the way to white', () {
+    // A page shot with the hand shading one corner: the paper there is about
+    // 3.5x darker than the lit side, and the shade is warm because the light
+    // is. Both the darkness and the tint have to go, or the corner reads as a
+    // grey smudge on an otherwise white page.
+    //
+    // The page has to be large enough that the 16 px estimate grid is small
+    // compared with the shadow, as it is on a real 8 MP capture. On a tiny
+    // canvas one cell of dilation reaches across the whole gradient and the
+    // shadow is never really underestimated.
+    const int w = 720;
+    const int h = 960;
+    final img.Image page = img.Image(width: w, height: h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        final double dx = x / (w - 1);
+        final double dy = y / (h - 1);
+        final double corner = math.sqrt(dx * dx + dy * dy) / math.sqrt(2);
+        final double shade = 1 - 0.75 * corner;
+        page.setPixelRgb(
+          x,
+          y,
+          (232 * shade).round().clamp(0, 255),
+          (228 * shade).round().clamp(0, 255),
+          (220 * shade).round().clamp(0, 255),
+        );
+      }
+    }
+    for (int line = 0; line < 6; line++) {
+      img.fillRect(
+        page,
+        x1: (w * 0.1).round(),
+        y1: (h * (0.1 + line * 0.12)).round(),
+        x2: (w * 0.9).round(),
+        y2: (h * (0.1 + line * 0.12)).round() + (h * 0.02).round(),
+        color: img.ColorRgb8(40, 40, 44),
+      );
+    }
+
+    final img.Image after = img.decodeImage(
+      ImagePipeline.processPreset(img.encodeJpg(page), ScanPreset.auto),
+    )!;
+
+    // Mean of the shaded corner, well inside the crop.
+    double r = 0;
+    double g = 0;
+    double b = 0;
+    int n = 0;
+    for (int y = (h * 0.85).round(); y < (h * 0.98).round(); y++) {
+      for (int x = (w * 0.85).round(); x < (w * 0.98).round(); x++) {
+        final img.Pixel p = after.getPixel(x, y);
+        r += p.r;
+        g += p.g;
+        b += p.b;
+        n++;
+      }
+    }
+    r /= n;
+    g /= n;
+    b /= n;
+    final double luma = r * 0.299 + g * 0.587 + b * 0.114;
+    final double cast = math.max(
+      (r - g).abs(),
+      math.max((r - b).abs(), (g - b).abs()),
+    );
+
+    expect(
+      luma,
+      greaterThan(232),
+      reason: 'the corner is still shaded: '
+          '${r.toStringAsFixed(0)},${g.toStringAsFixed(0)},'
+          '${b.toStringAsFixed(0)}',
+    );
+    expect(cast, lessThan(12), reason: 'the corner is still warm');
+  });
+
   /// Largest difference between the mean R, G and B of any block. A blotch is
   /// a region that has drifted off grey, not a single noisy pixel, so this is
   /// the measurement that matters for colour the pipeline invents.
