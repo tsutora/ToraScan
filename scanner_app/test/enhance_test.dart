@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -447,6 +448,205 @@ void main() {
     // (positive detail); the asymmetric rule halves it instead of boosting it,
     // so it stays at paper level rather than gaining a halo.
     expect(asymmetric.getPixel(4, 3).r, lessThanOrEqualTo(202));
+  });
+
+  /// A page as a phone actually captures it: neutral paper, a soft shadow over
+  /// part of it, and the independent per-channel noise of a small sensor.
+  img.Image noisyShadowPage({double shadowFloor = 0.35, double noise = 5}) {
+    final img.Image page = img.Image(width: 300, height: 400);
+    int state = 20261108;
+    double next() {
+      state = (state * 1103515245 + 12345) & 0x7fffffff;
+      return state / 0x7fffffff;
+    }
+
+    double bell() => (next() + next() + next() - 1.5) / 1.5;
+
+    for (int y = 0; y < 400; y++) {
+      for (int x = 0; x < 300; x++) {
+        final double u = x / 299;
+        final double shadow = (1 - u / 0.45).clamp(0.0, 1.0);
+        final double lit = 1 - (1 - shadowFloor) * shadow;
+        final int base = (222 * lit).round();
+        page.setPixelRgb(
+          x,
+          y,
+          (base + (bell() * noise).round()).clamp(0, 255),
+          (base + (bell() * noise).round()).clamp(0, 255),
+          (base + (bell() * noise).round()).clamp(0, 255),
+        );
+      }
+    }
+    for (int line = 0; line < 8; line++) {
+      final int top = 20 + line * 46;
+      img.fillRect(
+        page,
+        x1: 30,
+        y1: top,
+        x2: 270,
+        y2: top + 8,
+        color: img.ColorRgb8(48, 48, 52),
+      );
+    }
+    return page;
+  }
+
+  ({double mean, int worst, double over}) bandChroma(
+    img.Image image, {
+    int x0 = 2,
+    int x1 = 26,
+    int y0 = 60,
+    int y1 = 340,
+  }) {
+    double sum = 0;
+    int total = 0;
+    int worst = 0;
+    int over = 0;
+    for (int y = y0; y < y1; y++) {
+      for (int x = x0; x < x1; x++) {
+        final img.Pixel p = image.getPixel(x, y);
+        final int hi = math.max(p.r.toInt(), math.max(p.g.toInt(), p.b.toInt()));
+        final int lo = math.min(p.r.toInt(), math.min(p.g.toInt(), p.b.toInt()));
+        final int chroma = hi - lo;
+        sum += chroma;
+        total++;
+        if (chroma > worst) {
+          worst = chroma;
+        }
+        if (chroma > 12) {
+          over++;
+        }
+      }
+    }
+    return (mean: sum / total, worst: worst, over: over / total);
+  }
+
+  test('auto does not paint colour into a shadow', () {
+    // The defect this guards: paper that is merely shaded came back with
+    // random green and magenta patches. Paper is neutral in both bands here, so
+    // every unit of chroma in the shadow was invented by the pipeline.
+    for (final double floor in <double>[0.55, 0.35, 0.20]) {
+      final img.Image after = img.decodeImage(
+        ImagePipeline.processPreset(
+          img.encodeJpg(noisyShadowPage(shadowFloor: floor)),
+          ScanPreset.auto,
+        ),
+      )!;
+      final ({double mean, int worst, double over}) shadow = bandChroma(after);
+
+      expect(
+        shadow.mean,
+        lessThan(4),
+        reason: 'floor $floor: mean chroma ${shadow.mean.toStringAsFixed(1)}',
+      );
+      expect(
+        shadow.over,
+        lessThan(0.01),
+        reason: 'floor $floor: '
+            '${(shadow.over * 100).toStringAsFixed(1)}% of the shadow is visibly coloured',
+      );
+      expect(shadow.worst, lessThan(22));
+    }
+  });
+
+  /// Largest difference between the mean R, G and B of any block. A blotch is
+  /// a region that has drifted off grey, not a single noisy pixel, so this is
+  /// the measurement that matters for colour the pipeline invents.
+  double worstBlockCast(img.Image image, int block) {
+    double worst = 0;
+    for (int by = 0; by + block <= image.height; by += block) {
+      for (int bx = 0; bx + block <= image.width; bx += block) {
+        double r = 0;
+        double g = 0;
+        double b = 0;
+        for (int y = by; y < by + block; y++) {
+          for (int x = bx; x < bx + block; x++) {
+            final img.Pixel p = image.getPixel(x, y);
+            r += p.r;
+            g += p.g;
+            b += p.b;
+          }
+        }
+        final int n = block * block;
+        r /= n;
+        g /= n;
+        b /= n;
+        final double cast = math.max(
+          (r - g).abs(),
+          math.max((r - b).abs(), (g - b).abs()),
+        );
+        if (cast > worst) {
+          worst = cast;
+        }
+      }
+    }
+    return worst;
+  }
+
+  test('the illumination estimate is not fooled by per-channel noise', () {
+    // Three independent per-channel maxima describe a colour no pixel in the
+    // cell has. With noise and no shadow at all, the estimate must still come
+    // out neutral.
+    final img.Image page = img.Image(width: 240, height: 320);
+    int state = 7;
+    double next() {
+      state = (state * 1103515245 + 12345) & 0x7fffffff;
+      return state / 0x7fffffff;
+    }
+
+    for (int y = 0; y < 320; y++) {
+      for (int x = 0; x < 240; x++) {
+        final int nr = ((next() - 0.5) * 40).round();
+        final int ng = ((next() - 0.5) * 40).round();
+        final int nb = ((next() - 0.5) * 40).round();
+        page.setPixelRgb(
+          x,
+          y,
+          (190 + nr).clamp(0, 255),
+          (190 + ng).clamp(0, 255),
+          (190 + nb).clamp(0, 255),
+        );
+      }
+    }
+
+    final img.Image after = img.decodeImage(
+      ImagePipeline.processPreset(img.encodeJpg(page), ScanPreset.auto),
+    )!;
+
+    final img.Image flat = ImagePipeline.flattenIllumination(page);
+
+    expect(
+      worstBlockCast(flat, 32),
+      lessThan(5),
+      reason: 'no region may come out tinted on neutral, evenly lit paper',
+    );
+    expect(after.width, 240);
+  });
+
+  test('sharpening cannot create a colour edge', () {
+    // Detail is measured on luminance and added to all three channels. If R, G
+    // and B were sharpened separately, a patch of colour would spread its
+    // channels unevenly into the paper around it.
+    final img.Image page = img.Image(width: 9, height: 9);
+    img.fill(page, color: img.ColorRgb8(150, 150, 150));
+    // Same luminance as the paper, quite different colour.
+    page.setPixelRgb(4, 4, 170, 140, 140);
+
+    final img.Image after = ImagePipeline.sharpen(page, asymmetric: true);
+    final img.Pixel centre = after.getPixel(4, 4);
+    final img.Pixel neighbour = after.getPixel(4, 3);
+
+    expect(
+      ((centre.r - centre.g) - 30).abs(),
+      lessThan(4),
+      reason: 'the patch keeps the chroma it had',
+    );
+    expect(centre.r - centre.g, greaterThan(26));
+    expect(
+      neighbour.r - neighbour.g,
+      lessThan(3),
+      reason: 'paper next to it stays grey',
+    );
   });
 
   test('a bright coloured background does not tint the page edge', () {

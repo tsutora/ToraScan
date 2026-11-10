@@ -23,7 +23,10 @@ import '../models/scan_preset.dart';
 /// between the channels â€” and therefore the hue â€” intact, so a pink form stays
 /// pink and black ink stays black. Chroma is only touched where the *local
 /// background* is a plausible light cast (roughly neutral, and warm or cool
-/// rather than magenta or green).
+/// rather than magenta or green), it is corrected less than brightness, and the
+/// correction fades out where the background is too dark to measure. Detail for
+/// the unsharp pass is taken from luminance alone, so sharpening cannot create
+/// a colour edge.
 ///
 /// All heavy passes address the image as a byte buffer. The `image` package's
 /// `Pixel` objects are convenient but allocate one object per pixel, which is
@@ -331,16 +334,28 @@ class ImagePipeline {
   /// a lamp on one side of the page) while keeping edges: each pixel is divided
   /// by a heavily downsampled estimate of its local paper colour.
   ///
-  /// The estimate uses the *peak* of each cell, dilated across neighbours, so
-  /// dense ink never drags the background down â€” that is what leaves white
-  /// halos around text blocks in a naive implementation. The grid is coarse on
-  /// purpose: a cell should almost always contain some paper, and a wider
-  /// dilation (two cells) bridges a whole line of dense text.
+  /// The brightness estimate uses the *brightest* pixels of each cell, dilated
+  /// across neighbours, so dense ink never drags the background down â€” that is
+  /// what leaves white halos around text blocks in a naive implementation. The
+  /// grid is coarse on purpose.
   ///
-  /// Only pixels that could plausibly be paper vote on the colour. A pixel
-  /// whose middle channel is not between red and blue â€” pink, magenta, green â€”
-  /// is pigment, not a light cast, and is left out of the estimate. That is
-  /// what keeps a pink form pink instead of "correcting" it to grey.
+  /// The estimate is built from the mean *colour* of those brightest pixels,
+  /// not from three independent per-channel maxima. Taking the maximum of each
+  /// channel separately describes a colour no pixel in the cell actually has,
+  /// and the error grows with sensor noise; multiplying that error by the up to
+  /// 2.8x shadow lift is what painted random green and magenta patches over
+  /// slightly shadowed paper.
+  ///
+  /// Colour is then corrected far more cautiously than brightness:
+  ///
+  ///  * the cast is smoothed over a much wider area than the brightness, since
+  ///    the colour of the light changes across a page far more slowly;
+  ///  * cells that are not paper-coloured (pigment, a gold envelope) barely
+  ///    vote, which is what keeps a pink form pink instead of "correcting" it
+  ///    to grey;
+  ///  * the correction is gated by how bright the local paper is, because in a
+  ///    deep shadow the estimate cannot be told apart from noise. Whatever is
+  ///    left over is handled by the global white balance in [toneMap].
   static img.Image flattenIllumination(img.Image src, {int scale = 16}) {
     final int w = src.width;
     final int h = src.height;
@@ -355,13 +370,15 @@ class ImagePipeline {
     final int sw = (w + scale - 1) ~/ scale;
     final int sh = (h + scale - 1) ~/ scale;
     final int cells = sw * sh;
-    final Int32List peakR = Int32List(cells);
-    final Int32List peakG = Int32List(cells);
-    final Int32List peakB = Int32List(cells);
-    final Int32List samples = Int32List(cells);
+
+    // Pass 1: the brightest *value* in each cell, where value is the darkest
+    // of the three channels. Selecting on luminance would bias the result:
+    // luminance weights green most heavily, so keeping the brightest pixels by
+    // luminance keeps the greenest ones too, and the paper comes out green on
+    // one cell and neutral on the next.
+    final Int32List cellLevel = Int32List(cells);
     int lumaSum = 0;
     int lumaCount = 0;
-
     for (int y = 0; y < h; y++) {
       final int row = y * stride;
       final int cellRow = (y ~/ scale) * sw;
@@ -370,50 +387,113 @@ class ImagePipeline {
         final int r = bytes[i];
         final int g = bytes[i + 1];
         final int b = bytes[i + 2];
-        lumaSum += r * 299 + g * 587 + b * 114;
+        lumaSum += (r * 299 + g * 587 + b * 114) ~/ 1000;
         lumaCount++;
-
+        final int level = math.min(r, math.min(g, b));
         final int index = cellRow + (x ~/ scale);
-        samples[index]++;
-        if (r > peakR[index]) {
-          peakR[index] = r;
-        }
-        if (g > peakG[index]) {
-          peakG[index] = g;
-        }
-        if (b > peakB[index]) {
-          peakB[index] = b;
+        if (level > cellLevel[index]) {
+          cellLevel[index] = level;
         }
       }
     }
+    final int grey = lumaCount == 0 ? 200 : (lumaSum / lumaCount).round();
 
-    // Every cell has a peak: the brightest pixel wins, whatever its hue. That
-    // is what makes a pink form contribute its own brightness to the estimate
-    // while its colour is still protected by the neutrality test below. Only
-    // the brightness is needed for the gain; the colour only decides how much
-    // of the local cast may be neutralised.
-    final int grey = lumaCount == 0 ? 200 : (lumaSum / lumaCount / 1000).round();
-    final int fillR = grey;
-    final int fillG = grey;
-    final int fillB = grey;
+    // Pass 2: mean RGB of the pixels within [paperSlice] levels of the cell's
+    // brightest one. Averaging whole triples keeps the estimate a colour the
+    // paper really has, and drops the noise by sqrt(n).
+    const int paperSlice = 10;
+    final Int32List sumR = Int32List(cells);
+    final Int32List sumG = Int32List(cells);
+    final Int32List sumB = Int32List(cells);
+    final Int32List votes = Int32List(cells);
+    for (int y = 0; y < h; y++) {
+      final int row = y * stride;
+      final int cellRow = (y ~/ scale) * sw;
+      for (int x = 0; x < w; x++) {
+        final int i = row + x * 3;
+        final int index = cellRow + (x ~/ scale);
+        final int r = bytes[i];
+        final int g = bytes[i + 1];
+        final int b = bytes[i + 2];
+        if (math.min(r, math.min(g, b)) < cellLevel[index] - paperSlice) {
+          continue;
+        }
+        sumR[index] += r;
+        sumG[index] += g;
+        sumB[index] += b;
+        votes[index]++;
+      }
+    }
+
+    final Int32List paperR = Int32List(cells);
+    final Int32List paperG = Int32List(cells);
+    final Int32List paperB = Int32List(cells);
+    final Int32List paperLuma = Int32List(cells);
     for (int i = 0; i < cells; i++) {
-      if (samples[i] == 0) {
-        peakR[i] = fillR;
-        peakG[i] = fillG;
-        peakB[i] = fillB;
-      }
+      final int n = votes[i];
+      paperR[i] = n == 0 ? grey : sumR[i] ~/ n;
+      paperG[i] = n == 0 ? grey : sumG[i] ~/ n;
+      paperB[i] = n == 0 ? grey : sumB[i] ~/ n;
+      paperLuma[i] =
+          (paperR[i] * 299 + paperG[i] * 587 + paperB[i] * 114) ~/ 1000;
     }
 
-    // A small dilation makes each estimate monotone across ink, then a blur
-    // removes the blockiness of the downsampled grid.
-    final Int32List bgR = _boxBlurInt(_dilateInt(peakR, sw, sh, 2), sw, sh, 2);
-    final Int32List bgG = _boxBlurInt(_dilateInt(peakG, sw, sh, 2), sw, sh, 2);
-    final Int32List bgB = _boxBlurInt(_dilateInt(peakB, sw, sh, 2), sw, sh, 2);
+    // Brightness: a small dilation makes the estimate monotone across ink, then
+    // a blur removes the blockiness of the downsampled grid.
+    final Int32List background = _boxBlurInt(
+      _dilateInt(paperLuma, sw, sh, 2),
+      sw,
+      sh,
+      2,
+    );
+
+    // Colour: no dilation (that would pull one channel from a neighbour's
+    // pigment and invent a colour), a wider blur, and a vote weighted by how
+    // much each cell looks like paper.
+    final Int32List castWeight = Int32List(cells);
+    for (int i = 0; i < cells; i++) {
+      final int r = paperR[i];
+      final int g = paperG[i];
+      final int b = paperB[i];
+      final int hi = math.max(r, math.max(g, b));
+      final int lo = math.min(r, math.min(g, b));
+      final int saturation = hi <= 1 ? 0 : (hi - lo) * 100 ~/ hi;
+      double weight = ((60 - saturation) / 22).clamp(0.0, 1.0);
+      // Magenta / pink / green backgrounds are content, not a cast.
+      weight *= _pigmentConfidence(r, g, b);
+      weight *= ((paperLuma[i] - 30) / 40).clamp(0.0, 1.0);
+      castWeight[i] = (weight * 256).round();
+    }
+
+    final Int32List castR = _weightedBlur(
+      paperR,
+      paperLuma,
+      castWeight,
+      sw,
+      sh,
+      3,
+    );
+    final Int32List castG = _weightedBlur(
+      paperG,
+      paperLuma,
+      castWeight,
+      sw,
+      sh,
+      3,
+    );
+    final Int32List castB = _weightedBlur(
+      paperB,
+      paperLuma,
+      castWeight,
+      sw,
+      sh,
+      3,
+    );
 
     int total = 0;
     int counted = 0;
     for (int i = 0; i < cells; i++) {
-      final int luma = (bgR[i] * 299 + bgG[i] * 587 + bgB[i] * 114) ~/ 1000;
+      final int luma = background[i];
       if (luma > 1) {
         total += luma;
         counted++;
@@ -424,11 +504,57 @@ class ImagePipeline {
     // Paper should land near white, but never darken an already bright page.
     final int target = meanBackground < 215 ? 226 : meanBackground;
 
+    // Per-cell gains, interpolated per pixel below. Applying a whole cell's
+    // gain to every pixel inside it is what keeps three divisions and a square
+    // root out of the 4 M pixel loop.
+    final Int32List lift = Int32List(cells);
+    final Int32List chromaLift = Int32List(cells);
+    final Int32List gainR = Int32List(cells);
+    final Int32List gainG = Int32List(cells);
+    final Int32List gainB = Int32List(cells);
+    for (int i = 0; i < cells; i++) {
+      final int backgroundLuma = background[i].clamp(1, 255);
+      final double factor = (target / backgroundLuma).clamp(0.55, 2.8);
+      lift[i] = (factor * 256).round();
+      // Chroma is lifted *less* than luminance, and only when lifting: in a
+      // shadow the exposure can be raised 2.8x, and sensor colour noise would
+      // be raised with it. Keeping the hue and losing a little saturation in
+      // shadow is what a real capture pipeline does, and it is invisible next
+      // to coloured blotches on what should be grey paper.
+      final double chromaFactor = factor <= 1
+          ? factor
+          : math.pow(factor, 0.6).toDouble();
+      chromaLift[i] = (chromaFactor * 256).round();
+
+      final int red = (background[i] + castR[i]).clamp(24, 255);
+      final int green = (background[i] + castG[i]).clamp(24, 255);
+      final int blue = (background[i] + castB[i]).clamp(24, 255);
+      final int bgLuma = (red * 299 + green * 587 + blue * 114) ~/ 1000;
+
+      // How much of the local colour is light rather than pigment.
+      final int hi = math.max(red, math.max(green, blue));
+      final int lo = math.min(red, math.min(green, blue));
+      final int saturation = hi <= 1 ? 0 : (hi - lo) * 100 ~/ hi;
+      double confidence = ((60 - saturation) / 22).clamp(0.0, 1.0);
+      confidence *= _pigmentConfidence(red, green, blue);
+      // A dark background cannot be measured reliably enough to correct its
+      // colour: fading the correction out there is what stops noise being
+      // painted into the shadow.
+      confidence *= ((bgLuma - 45) / 50).clamp(0.0, 1.0);
+
+      final double gR = (1 + (bgLuma / red - 1) * confidence).clamp(0.86, 1.16);
+      final double gG = (1 + (bgLuma / green - 1) * confidence).clamp(0.86, 1.16);
+      final double gB = (1 + (bgLuma / blue - 1) * confidence).clamp(0.86, 1.16);
+      gainR[i] = (gR * 256).round();
+      gainG[i] = (gG * 256).round();
+      gainB[i] = (gB * 256).round();
+    }
+
     final Uint8List out = Uint8List(w * h * 3);
 
-    // The background grid is [scale] times coarser than the page, so a whole
-    // block of pixels shares the same four cells. Resolving the column indices
-    // once keeps the per-pixel loop down to the interpolation itself.
+    // The gain grid is [scale] times coarser than the page, so a whole block of
+    // pixels shares the same four cells. Resolving the column indices once
+    // keeps the per-pixel loop down to the interpolation itself.
     final Int32List colLeft = Int32List(w);
     final Int32List colRight = Int32List(w);
     final Int32List colWeight = Int32List(w);
@@ -449,55 +575,39 @@ class ImagePipeline {
       final int rowBottom = y1 * sw;
       final int row = y * stride;
       final int outRow = y * w * 3;
+      final int invY = 256 - wy;
 
       for (int x = 0; x < w; x++) {
         final int x0 = colLeft[x];
         final int x1 = colRight[x];
         final int wx = colWeight[x];
         final int invX = 256 - wx;
-        final int invY = 256 - wy;
 
-        final int bgRHere =
-            ((bgR[rowTop + x0] * invX + bgR[rowTop + x1] * wx) * invY +
-                (bgR[rowBottom + x0] * invX + bgR[rowBottom + x1] * wx) * wy) >>
-            16;
-        final int bgGHere =
-            ((bgG[rowTop + x0] * invX + bgG[rowTop + x1] * wx) * invY +
-                (bgG[rowBottom + x0] * invX + bgG[rowBottom + x1] * wx) * wy) >>
-            16;
-        final int bgBHere =
-            ((bgB[rowTop + x0] * invX + bgB[rowTop + x1] * wx) * invY +
-                (bgB[rowBottom + x0] * invX + bgB[rowBottom + x1] * wx) * wy) >>
+        int mix(Int32List grid) =>
+            ((grid[rowTop + x0] * invX + grid[rowTop + x1] * wx) * invY +
+                (grid[rowBottom + x0] * invX + grid[rowBottom + x1] * wx) *
+                    wy) >>
             16;
 
-        final int red = bgRHere.clamp(24, 255);
-        final int green = bgGHere.clamp(24, 255);
-        final int blue = bgBHere.clamp(24, 255);
-
-        final int bgLuma = (red * 299 + green * 587 + blue * 114) ~/ 1000;
-        final double factor = (target / bgLuma).clamp(0.55, 2.8);
-
-        // How much of the local colour is light rather than pigment. Paper is
-        // near-neutral (whatever the lamp does to it), a printed block is not.
-        final int hi = math.max(red, math.max(green, blue));
-        final int lo = math.min(red, math.min(green, blue));
-        final int saturation = hi <= 1 ? 0 : (hi - lo) * 100 ~/ hi;
-        double neutral = ((60 - saturation) / 22).clamp(0.0, 1.0);
-        // Magenta / pink / green backgrounds are content, not a cast.
-        if ((red - green) * (blue - green) > 0) {
-          neutral = 0;
-        }
-
-        // Luma-preserving gains that pull the local background to neutral.
-        final double gainR = 1 + (bgLuma / red - 1) * neutral;
-        final double gainG = 1 + (bgLuma / green - 1) * neutral;
-        final double gainB = 1 + (bgLuma / blue - 1) * neutral;
+        final int lf = mix(lift);
+        final int cf = mix(chromaLift);
 
         final int i = row + x * 3;
         final int dest = outRow + x * 3;
-        out[dest] = (bytes[i] * factor * gainR).round().clamp(0, 255);
-        out[dest + 1] = (bytes[i + 1] * factor * gainG).round().clamp(0, 255);
-        out[dest + 2] = (bytes[i + 2] * factor * gainB).round().clamp(0, 255);
+
+        // White balance first: it is luma-preserving on the *background*, so
+        // the shadow lift below cannot turn a small cast correction into a
+        // saturation change.
+        final int red = (bytes[i] * mix(gainR)) >> 8;
+        final int green = (bytes[i + 1] * mix(gainG)) >> 8;
+        final int blue = (bytes[i + 2] * mix(gainB)) >> 8;
+        final int luma = (red * 299 + green * 587 + blue * 114) ~/ 1000;
+
+        out[dest] = ((luma * lf + (red - luma) * cf + 128) >> 8).clamp(0, 255);
+        out[dest + 1] =
+            ((luma * lf + (green - luma) * cf + 128) >> 8).clamp(0, 255);
+        out[dest + 2] =
+            ((luma * lf + (blue - luma) * cf + 128) >> 8).clamp(0, 255);
       }
     }
 
@@ -556,7 +666,7 @@ class ImagePipeline {
         final int hi = math.max(r, math.max(g, b));
         final int lo = math.min(r, math.min(g, b));
         final int saturation = hi <= 0 ? 0 : (hi - lo) * 100 ~/ hi;
-        if (saturation > 24 || (r - g) * (b - g) > 0) {
+        if (saturation > 24 || _isPigment(r, g, b)) {
           continue;
         }
         sumR += r;
@@ -612,7 +722,7 @@ class ImagePipeline {
         final int hi = math.max(r, math.max(g, b));
         final int lo = math.min(r, math.min(g, b));
         final int saturation = hi <= 0 ? 0 : (hi - lo) * 100 ~/ hi;
-        if (saturation <= 28 && (r - g) * (b - g) <= 0) {
+        if (saturation <= 28 && !_isPigment(r, g, b)) {
           paperHistogram[luma]++;
           paperCount++;
         }
@@ -687,7 +797,14 @@ class ImagePipeline {
             down = -trough;
           }
 
-          double factor = saturation;
+          // Grey pixels have no chroma to expand, only noise. Ramping the
+          // expansion in with existing chroma is what keeps a slightly
+          // shadowed area from turning into coloured blotches: a real colour
+          // block or a pink form is far past this threshold and still gets the
+          // full 1.5x.
+          final int peakChroma = math.max(up, down);
+          final double presence = ((peakChroma - 6) / 12).clamp(0.0, 1.0);
+          double factor = 1 + (saturation - 1) * presence;
           final int lumaRound = luma.round();
           if (up > 0) {
             final double room = (255 - lumaRound) / up;
@@ -751,7 +868,7 @@ class ImagePipeline {
         final int hi = math.max(r, math.max(g, b));
         final int lo = math.min(r, math.min(g, b));
         final int saturation = hi <= 0 ? 0 : (hi - lo) * 100 ~/ hi;
-        if (saturation > 24 || (r - g) * (b - g) > 0) {
+        if (saturation > 24 || _isPigment(r, g, b)) {
           continue;
         }
         sumR += r;
@@ -803,6 +920,11 @@ class ImagePipeline {
   /// A five-point blur is used instead of a separable Gaussian: it is one pass,
   /// integer-only, and visually indistinguishable at this radius.
   ///
+  /// The detail is measured on luminance and added, unchanged, to all three
+  /// channels. Sharpening R, G and B independently sharpens colour edges too,
+  /// which is what used to leave cyan and magenta rims around black text and
+  /// exaggerate colour noise in shadow; one luminance delta cannot shift hue.
+  ///
   /// With [asymmetric] the detail is shaped the way CamScanner's own sharpener
   /// shapes it: a pixel *darker* than its neighbourhood by more than 20 levels
   /// keeps twice its detail, a difference between 10 and 20 levels is kept as
@@ -822,43 +944,50 @@ class ImagePipeline {
     final int h = source.height;
     final Uint8List bytes = source.toUint8List();
     final int stride = source.rowStride;
-    final Uint8List out = Uint8List(w * h * 3);
     final int amount256 = (amount * 256).round();
 
+    final Uint8List luma = Uint8List(w * h);
     for (int y = 0; y < h; y++) {
       final int row = y * stride;
-      final int rowUp = (y > 0 ? y - 1 : y) * stride;
-      final int rowDown = (y < h - 1 ? y + 1 : y) * stride;
-      final int outRow = y * w * 3;
-
+      final int lumaRow = y * w;
       for (int x = 0; x < w; x++) {
         final int i = row + x * 3;
-        final int iLeft = row + (x > 0 ? x - 1 : x) * 3;
-        final int iRight = row + (x < w - 1 ? x + 1 : x) * 3;
-        final int iUp = rowUp + x * 3;
-        final int iDown = rowDown + x * 3;
-        final int dest = outRow + x * 3;
+        luma[lumaRow + x] =
+            (bytes[i] * 299 + bytes[i + 1] * 587 + bytes[i + 2] * 114) ~/ 1000;
+      }
+    }
 
-        for (int ch = 0; ch < 3; ch++) {
-          final int centre = bytes[i + ch];
-          final int soft =
-              (bytes[iLeft + ch] +
-                  bytes[iRight + ch] +
-                  bytes[iUp + ch] +
-                  bytes[iDown + ch] +
-                  centre * 2) ~/
-              6;
-          int detail = centre - soft;
-          if (asymmetric) {
-            if (detail < -20) {
-              detail *= 2;
-            } else if (detail >= -10) {
-              detail ~/= 2;
-            }
+    final Uint8List out = Uint8List(w * h * 3);
+    for (int y = 0; y < h; y++) {
+      final int row = y * stride;
+      final int outRow = y * w * 3;
+      final int lumaRow = y * w;
+      final int lumaUp = (y > 0 ? y - 1 : y) * w;
+      final int lumaDown = (y < h - 1 ? y + 1 : y) * w;
+
+      for (int x = 0; x < w; x++) {
+        final int centre = luma[lumaRow + x];
+        final int soft =
+            (luma[lumaRow + (x > 0 ? x - 1 : x)] +
+                luma[lumaRow + (x < w - 1 ? x + 1 : x)] +
+                luma[lumaUp + x] +
+                luma[lumaDown + x] +
+                centre * 2) ~/
+            6;
+        int detail = centre - soft;
+        if (asymmetric) {
+          if (detail < -20) {
+            detail *= 2;
+          } else if (detail >= -10) {
+            detail ~/= 2;
           }
-          final int value = centre + (detail * amount256 ~/ 256);
-          out[dest + ch] = value.clamp(0, 255);
         }
+        final int delta = detail * amount256 ~/ 256;
+        final int i = row + x * 3;
+        final int dest = outRow + x * 3;
+        out[dest] = (bytes[i] + delta).clamp(0, 255);
+        out[dest + 1] = (bytes[i + 1] + delta).clamp(0, 255);
+        out[dest + 2] = (bytes[i + 2] + delta).clamp(0, 255);
       }
     }
 
@@ -971,12 +1100,100 @@ class ImagePipeline {
     return histogram.length - 1;
   }
 
+  /// True when the middle channel sits clearly above or below both of the
+  /// others: a green or magenta cast of pigment rather than a plausible light
+  /// source. A one-level rounding difference must not qualify, or a perfectly
+  /// neutral page can drop out of its own white-point estimate.
+  static bool _isPigment(int r, int g, int b) {
+    return math.min(r - g, b - g) > 2 || math.min(g - r, g - b) > 2;
+  }
+
+  /// How much a background colour may be trusted as light rather than pigment.
+  ///
+  /// The same test as [_isPigment], but continuous. A hard threshold applied to
+  /// a noisy per-cell estimate turns noise into structure: neighbouring cells
+  /// land on opposite sides of it and the shadow comes out blotchy. Fading the
+  /// correction out over ten levels instead makes that impossible.
+  static double _pigmentConfidence(int r, int g, int b) {
+    final int excess = math.max(
+      math.min(r - g, b - g),
+      math.min(g - r, g - b),
+    );
+    return 1 - ((excess - 2) / 10).clamp(0.0, 1.0);
+  }
+
   static double _balance(double target, double mean, double strength) {
     if (mean < 1) {
       return 1;
     }
     final double blended = 1 + (target / mean - 1) * strength;
     return blended.clamp(0.9, 1.12);
+  }
+
+  /// Box blur of `value - reference`, averaged only over cells that carry a
+  /// weight. Cells with a zero weight are ignored rather than pulling the
+  /// result towards zero, and a window with no weighted cell at all comes out
+  /// neutral.
+  ///
+  /// This is how the colour of the light is estimated: the brightness of a page
+  /// changes quickly (that is the shadow being removed), its colour changes
+  /// slowly, so the cast can be smoothed over a much wider area than the
+  /// brightness without losing the shadow's shape.
+  static Int32List _weightedBlur(
+    Int32List value,
+    Int32List reference,
+    Int32List weight,
+    int width,
+    int height,
+    int radius,
+  ) {
+    final int n = width * height;
+    final Int32List difference = Int32List(n);
+    for (int i = 0; i < n; i++) {
+      difference[i] = value[i] - reference[i];
+    }
+
+    final Int32List horizontal = Int32List(n);
+    final Int32List horizontalWeight = Int32List(n);
+    for (int y = 0; y < height; y++) {
+      final int row = y * width;
+      for (int x = 0; x < width; x++) {
+        int sum = 0;
+        int total = 0;
+        for (int dx = -radius; dx <= radius; dx++) {
+          final int px = x + dx;
+          if (px < 0 || px >= width) {
+            continue;
+          }
+          final int w = weight[row + px];
+          if (w == 0) {
+            continue;
+          }
+          sum += difference[row + px] * w;
+          total += w;
+        }
+        horizontal[row + x] = sum;
+        horizontalWeight[row + x] = total;
+      }
+    }
+
+    final Int32List out = Int32List(n);
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        int sum = 0;
+        int total = 0;
+        for (int dy = -radius; dy <= radius; dy++) {
+          final int py = y + dy;
+          if (py < 0 || py >= height) {
+            continue;
+          }
+          sum += horizontal[py * width + x];
+          total += horizontalWeight[py * width + x];
+        }
+        out[y * width + x] = total == 0 ? 0 : sum ~/ total;
+      }
+    }
+    return out;
   }
 
   static Int32List _dilateInt(Int32List source, int width, int height, int radius) {

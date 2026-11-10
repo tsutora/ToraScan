@@ -52,6 +52,7 @@ Future<void> _enhanceIsolate(List<Object?> args) async {
   final int quality = args.length > 6 ? (args[6]! as int) : ImagePipeline.jpegQuality;
 
   final Uint8List bytes = await File(source).readAsBytes();
+  final Stopwatch watch = Stopwatch()..start();
   final Uint8List processed = ImagePipeline.processPreset(
     bytes,
     preset,
@@ -59,6 +60,13 @@ Future<void> _enhanceIsolate(List<Object?> args) async {
     maxEdge: maxEdge,
     quality: quality,
   );
+  watch.stop();
+  if (kDebugMode || kProfileMode) {
+    debugPrint(
+      'TORA  enhance ${preset.name} ${watch.elapsedMilliseconds} ms '
+      '(${maxEdge}px)',
+    );
+  }
 
   final File file = File(output);
   await file.parent.create(recursive: true);
