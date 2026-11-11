@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app_info.dart';
 import '../theme/app_theme.dart';
 import '../theme/palettes.dart';
 import '../theme/theme_controller.dart';
@@ -78,6 +79,11 @@ class ThemeDrawer extends StatelessWidget {
                     ),
                 ],
               ),
+            ),
+            ToraRule(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: ToraMicro('Version $toraVersion'),
             ),
           ],
         ),
