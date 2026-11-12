@@ -1,4 +1,4 @@
-﻿import 'dart:math' as math;
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
@@ -20,7 +20,7 @@ import '../models/scan_preset.dart';
 ///
 /// Every tonal operation is a single scalar gain on a pixel, or a curve driven
 /// by its luminance. Scaling R, G and B by the same number keeps the ratio
-/// between the channels â€” and therefore the hue â€” intact, so a pink form stays
+/// between the channels — and therefore the hue — intact, so a pink form stays
 /// pink and black ink stays black. Chroma is only touched where the *local
 /// background* is a plausible light cast (roughly neutral, and warm or cool
 /// rather than magenta or green), it is corrected less than brightness, and the
@@ -334,13 +334,21 @@ class ImagePipeline {
   /// a lamp on one side of the page) while keeping edges: each pixel is divided
   /// by a heavily downsampled estimate of its local paper colour.
   ///
-  /// The brightness estimate uses the *brightest* pixels of each cell, dilated
-  /// across neighbours, so dense ink never drags the background down â€” that is
-  /// what leaves white halos around text blocks in a naive implementation. The
-  /// grid is coarse on purpose.
+  /// The brightness estimate uses the most representative bright pixels of
+  /// each cell, dilated across neighbours, so dense ink never drags the
+  /// background down — that is what leaves white halos around text blocks in a
+  /// naive implementation. The grid is coarse on purpose.
   ///
-  /// The estimate is built from the mean *colour* of those brightest pixels,
-  /// not from three independent per-channel maxima. Taking the maximum of each
+  /// "Most representative" is a [paperRank] percentile of the cell, not its
+  /// brightest pixel, because paper sparkles: a phone camera records the
+  /// specular reflections of the paper's fibres, and a handful of near-white
+  /// pixels per cell is enough to pin a maximum-based estimate at white. A
+  /// page shaded across the text column then keeps its shadow in exactly the
+  /// shape of the text block — white margins, grey behind the letters — while
+  /// a percentile estimate still sees the paper underneath and lifts it.
+  ///
+  /// The estimate is built from the mean *colour* of those bright pixels, not
+  /// from three independent per-channel maxima. Taking the maximum of each
   /// channel separately describes a colour no pixel in the cell actually has,
   /// and the error grows with sensor noise; multiplying that error by the up to
   /// 2.8x shadow lift is what painted random green and magenta patches over
@@ -356,7 +364,11 @@ class ImagePipeline {
   ///  * the correction is gated by how bright the local paper is, because in a
   ///    deep shadow the estimate cannot be told apart from noise. Whatever is
   ///    left over is handled by the global white balance in [toneMap].
-  static img.Image flattenIllumination(img.Image src, {int scale = 16}) {
+  static img.Image flattenIllumination(
+    img.Image src, {
+    int scale = 16,
+    int paperRank = 95,
+  }) {
     final int w = src.width;
     final int h = src.height;
     if (w < scale * 2 || h < scale * 2) {
@@ -371,12 +383,26 @@ class ImagePipeline {
     final int sh = (h + scale - 1) ~/ scale;
     final int cells = sw * sh;
 
-    // Pass 1: the brightest *value* in each cell, where value is the darkest
-    // of the three channels. Selecting on luminance would bias the result:
-    // luminance weights green most heavily, so keeping the brightest pixels by
-    // luminance keeps the greenest ones too, and the paper comes out green on
-    // one cell and neutral on the next.
+    // Pass 1: the *value* in each cell that represents its paper, where value
+    // is the darkest of the three channels. Selecting on luminance would bias
+    // the result: luminance weights green most heavily, so keeping the
+    // brightest pixels by luminance keeps the greenest ones too, and the paper
+    // comes out green on one cell and neutral on the next.
+    //
+    // Alongside that maximum, the cell keeps a coarse histogram of the same
+    // value. The brightness estimate below uses a high percentile of it
+    // instead of the maximum: photographed paper always carries a sprinkling
+    // of specular fibre highlights, and even one per cell is enough to pin the
+    // cell's paper at 255. A cell whose paper is estimated at 255 is never
+    // lifted out of the shadow it is sitting in, which is exactly what leaves
+    // a flat grey block behind the text on a page shaded across the text
+    // column -- white margins, grey text block. Trimming the brightest few
+    // percent of a cell drops the speculars and keeps the paper. The colour
+    // estimate keeps the maximum, because a cell's brightest pixels are the
+    // ones whose colour is least contaminated by ink.
+    const int cellBins = 32;
     final Int32List cellLevel = Int32List(cells);
+    final Int32List cellTally = Int32List(cells * cellBins);
     int lumaSum = 0;
     int lumaCount = 0;
     for (int y = 0; y < h; y++) {
@@ -394,9 +420,34 @@ class ImagePipeline {
         if (level > cellLevel[index]) {
           cellLevel[index] = level;
         }
+        cellTally[index * cellBins + (level >> 3)]++;
       }
     }
     final int grey = lumaCount == 0 ? 200 : (lumaSum / lumaCount).round();
+
+    final Int32List paperPeak = Int32List(cells);
+    for (int index = 0; index < cells; index++) {
+      final int peak = cellLevel[index];
+      if (peak == 0) {
+        continue;
+      }
+      final int base = index * cellBins;
+      int total = 0;
+      for (int bin = 0; bin < cellBins; bin++) {
+        total += cellTally[base + bin];
+      }
+      final int cut = total * paperRank ~/ 100;
+      int above = 0;
+      int level = peak;
+      for (int bin = cellBins - 1; bin >= 0; bin--) {
+        above += cellTally[base + bin];
+        if (above > cut) {
+          level = (bin << 3) + 7;
+          break;
+        }
+      }
+      paperPeak[index] = math.min(peak, level);
+    }
 
     // Pass 2: mean RGB of the pixels within [paperSlice] levels of the cell's
     // brightest one. Averaging whole triples keeps the estimate a colour the
@@ -441,7 +492,7 @@ class ImagePipeline {
     // Brightness: a small dilation makes the estimate monotone across ink, then
     // a blur removes the blockiness of the downsampled grid.
     final Int32List background = _boxBlurInt(
-      _dilateInt(paperLuma, sw, sh, 2),
+      _dilateInt(paperPeak, sw, sh, 2),
       sw,
       sh,
       2,
@@ -638,7 +689,7 @@ class ImagePipeline {
   ///
   /// The tonal stretch is applied as one multiplier per pixel rather than one
   /// per channel. The multiplier is also capped so the brightest channel never
-  /// leaves 255 â€” a pink that is already near the top of the range brightens
+  /// leaves 255 — a pink that is already near the top of the range brightens
   /// only until it would clip, instead of washing out to white.
   static img.Image toneMap(
     img.Image src, {

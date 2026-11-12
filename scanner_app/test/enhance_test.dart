@@ -625,6 +625,76 @@ void main() {
     expect(cast, lessThan(12), reason: 'the corner is still warm');
   });
 
+  test('auto lifts a shadow under the paper\'s own specular sparkle', () {
+    // The other way the illumination estimate can fail, and the one that
+    // produced the grey text block on a real A52s capture: paper is not a
+    // flat surface. Under a lamp it sparkles, and a phone sensor records a
+    // few near-white pixels in every 16 px cell. A paper level taken from the
+    // cell *maximum* is then pinned at 255 in the shadowed text column too, so
+    // the shadow is never lifted -- the margins come out white and the block
+    // behind the text stays grey, which reads as a shadow pasted behind the
+    // letters. The level has to come from a high percentile of the cell, not
+    // its brightest pixel.
+    const int w = 480;
+    const int h = 640;
+    final img.Image page = img.Image(width: w, height: h);
+    final math.Random random = math.Random(11);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        final double across = ((x / (w - 1)) - 0.10) / 0.80;
+        final double shade = 1 -
+            0.45 * (across <= 0 || across >= 1 ? 0 : math.sin(across * math.pi));
+        int r = (226 * shade).round();
+        int g = (222 * shade).round();
+        int b = (216 * shade).round();
+        if (random.nextDouble() < 0.012) {
+          r = math.min(255, r + 60);
+          g = math.min(255, g + 60);
+          b = math.min(255, b + 60);
+        }
+        page.setPixelRgb(x, y, r, g, b);
+      }
+    }
+    for (int line = 0; line < 6; line++) {
+      final int top = (h * (0.10 + line * 0.12)).round();
+      img.fillRect(
+        page,
+        x1: (w * 0.16).round(),
+        y1: top,
+        x2: (w * 0.84).round(),
+        y2: top + (h * 0.02).round(),
+        color: img.ColorRgb8(42, 42, 46),
+      );
+    }
+
+    final img.Image after = img.decodeImage(
+      ImagePipeline.processPreset(img.encodeJpg(page), ScanPreset.auto),
+    )!;
+
+    // Paper between two lines, inside the shadow, against the lit margin.
+    final int y0 = (h * 0.49).round();
+    final int y1 = (h * 0.575).round();
+    final block = meanIn(after, (w * 0.20).round(), (w * 0.80).round(), y0, y1);
+    final margin = meanIn(after, (w * 0.01).round(), (w * 0.09).round(), y0, y1);
+    final double blockLuma =
+        block.r * 0.299 + block.g * 0.587 + block.b * 0.114;
+    final double marginLuma =
+        margin.r * 0.299 + margin.g * 0.587 + margin.b * 0.114;
+
+    expect(
+      blockLuma,
+      greaterThan(240),
+      reason: 'the shadow behind the text is still there: '
+          '${blockLuma.toStringAsFixed(1)}',
+    );
+    expect(
+      marginLuma - blockLuma,
+      lessThan(8),
+      reason: 'the text block is ${(marginLuma - blockLuma).toStringAsFixed(1)} '
+          'levels darker than the margins',
+    );
+  });
+
   /// Largest difference between the mean R, G and B of any block. A blotch is
   /// a region that has drifted off grey, not a single noisy pixel, so this is
   /// the measurement that matters for colour the pipeline invents.
