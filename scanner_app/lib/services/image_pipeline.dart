@@ -109,20 +109,154 @@ class ImagePipeline {
     return sharpen(out, asymmetric: true);
   }
 
-  /// Shadow removal that keeps the pigment exactly as it was on the paper.
+  /// Shadow removal that then makes the page's colour the point of the scan.
   ///
   /// [auto] is a document filter: it pushes the paper to white and expands
   /// colour, which is right for a receipt but wrong for a coloured cover, a
   /// stamp, a form printed in spot colour, or a photograph of a page with a
   /// tinted stock. This one still lifts the shadow (the paper is paper, and
   /// the light on it is not), but it scales chroma by the same factor as
-  /// luminance instead of holding it back, and it does not expand saturation
-  /// afterwards. A pink form comes out the pink it is, and paper texture is
-  /// never turned into coloured clouds.
+  /// luminance instead of holding it back, so the colour that is there comes
+  /// back at full strength, and then it amplifies it -- see [vibrance].
   static img.Image colour(img.Image src) {
     img.Image out = flattenIllumination(src, keepChroma: true);
-    out = toneMap(out, whitePoint: 236);
+    out = vibrance(out, strength: 2.0);
     return sharpen(out, amount: 0.35, asymmetric: true);
+  }
+
+  /// Amplifies colour without turning noise into colour.
+  ///
+  /// The whole page is measured at a quarter of its size first. A tint that is
+  /// really on the paper survives that averaging -- a printed block, a stamp, a
+  /// cream stock, the dye in a book cover -- while per-pixel chroma from the
+  /// sensor does not: it averages away to nothing, so the gain it earns is
+  /// nothing too. That is what lets the boost start almost at zero, where a
+  /// pale pink that a document filter would erase is still only a few levels
+  /// of chroma, and grow to the full [strength] for anything actually coloured.
+  ///
+  /// A flat multiplier would fix the pale tint's ratio but not make it visible;
+  /// because the boost is applied around each pixel's own luminance, the page's
+  /// whites stay white, its blacks stay black, and only the colour moves.
+  static img.Image vibrance(img.Image src, {double strength = 2.1}) {
+    final img.Image source = _toRgb8(src);
+    final int w = source.width;
+    final int h = source.height;
+    final Uint8List bytes = source.toUint8List();
+    final int stride = source.rowStride;
+
+    // Quarter-resolution chroma, two channels: how far red and blue sit from
+    // the pixel's luminance. Green is implied, so it does not need storing.
+    final int gw = (w + 3) >> 2;
+    final int gh = (h + 3) >> 2;
+    final Int32List chromaR = Int32List(gw * gh);
+    final Int32List chromaB = Int32List(gw * gh);
+    final Int32List votes = Int32List(gw * gh);
+    for (int y = 0; y < h; y++) {
+      final int row = y * stride;
+      final int gridRow = (y >> 2) * gw;
+      for (int x = 0; x < w; x++) {
+        final int i = row + x * 3;
+        final int r = bytes[i];
+        final int g = bytes[i + 1];
+        final int b = bytes[i + 2];
+        final int luma = (r * 299 + g * 587 + b * 114) ~/ 1000;
+        final int cell = gridRow + (x >> 2);
+        chromaR[cell] += r - luma;
+        chromaB[cell] += b - luma;
+        votes[cell]++;
+      }
+    }
+    final int cells = gw * gh;
+    for (int i = 0; i < cells; i++) {
+      final int n = votes[i];
+      if (n > 0) {
+        chromaR[i] = (chromaR[i] / n).round();
+        chromaB[i] = (chromaB[i] / n).round();
+      }
+    }
+    // Two passes: enough to bridge a stamp's dot screen and a cover's paper
+    // grain, short enough that a real edge keeps its place.
+    final Int32List fieldR = _boxBlurInt(
+      _boxBlurInt(chromaR, gw, gh, 1),
+      gw,
+      gh,
+      1,
+    );
+    final Int32List fieldB = _boxBlurInt(
+      _boxBlurInt(chromaB, gw, gh, 1),
+      gw,
+      gh,
+      1,
+    );
+
+    final Uint8List out = Uint8List(w * h * 3);
+    double gain = 1;
+    for (int y = 0; y < h; y++) {
+      final int row = y * stride;
+      final int outRow = y * w * 3;
+      final int gridRow = (y >> 2) * gw;
+      for (int x = 0; x < w; x++) {
+        // The grid is coarse and already smooth, so the nearest cell is the
+        // whole field: interpolating it would only cost time.
+        if ((x & 3) == 0) {
+          final int cell = gridRow + (x >> 2);
+          final int cr = fieldR[cell];
+          final int cb = fieldB[cell];
+          final int magnitude = math.max(cr.abs(), cb.abs());
+          // One level is rounding, two is noise; by four the tint is what the
+          // page is made of, and it gets the whole boost.
+          final double presence = ((magnitude - 1) / 3).clamp(0.0, 1.0);
+          // Headroom keeps the boost from turning a strong colour into a
+          // clipped neon one: a pale tint gets nearly the whole [strength],
+          // while colour that is already rich gets about a third of it.
+          final double headroom = (1 - magnitude / 90).clamp(0.35, 1.0);
+          gain = 1 + (strength - 1) * presence * headroom;
+        }
+
+        final int i = row + x * 3;
+        final int dest = outRow + x * 3;
+        final int r = bytes[i];
+        final int g = bytes[i + 1];
+        final int b = bytes[i + 2];
+
+        double factor = gain;
+        if (factor > 1) {
+          final int luma = (r * 299 + g * 587 + b * 114) ~/ 1000;
+          final int peak = math.max(r - luma, math.max(g - luma, b - luma));
+          final int trough = math.min(r - luma, math.min(g - luma, b - luma));
+          // Never scale past the point where a channel clips, or a strong
+          // colour would shift its hue as it saturates.
+          if (peak > 0) {
+            final double room = (255 - luma) / peak;
+            if (room < factor) {
+              factor = room;
+            }
+          }
+          if (trough < 0) {
+            final double room = luma / -trough;
+            if (room < factor) {
+              factor = room;
+            }
+          }
+          if (factor > 1) {
+            out[dest] = (luma + (r - luma) * factor).round().clamp(0, 255);
+            out[dest + 1] = (luma + (g - luma) * factor).round().clamp(0, 255);
+            out[dest + 2] = (luma + (b - luma) * factor).round().clamp(0, 255);
+            continue;
+          }
+        }
+        out[dest] = r;
+        out[dest + 1] = g;
+        out[dest + 2] = b;
+      }
+    }
+
+    return img.Image.fromBytes(
+      width: w,
+      height: h,
+      bytes: out.buffer,
+      numChannels: 3,
+    );
   }
 
   /// For dark captures and grey paper: like [auto], biased brighter.
@@ -384,7 +518,7 @@ class ImagePipeline {
   static img.Image flattenIllumination(
     img.Image src, {
     int scale = 16,
-    int paperRank = 95,
+    int paperRank = 65,
     int spread = 2,
     int smooth = 2,
     bool keepChroma = false,
@@ -403,23 +537,27 @@ class ImagePipeline {
     final int sh = (h + scale - 1) ~/ scale;
     final int cells = sw * sh;
 
-    // Pass 1: the *value* in each cell that represents its paper, where value
-    // is the darkest of the three channels. Selecting on luminance would bias
-    // the result: luminance weights green most heavily, so keeping the
-    // brightest pixels by luminance keeps the greenest ones too, and the paper
-    // comes out green on one cell and neutral on the next.
+    // Pass 1: the *value* in each cell that represents its paper, taken from
+    // the cell's brightest channel. Alongside that, the cell keeps a coarse
+    // histogram of the same value.
     //
-    // Alongside that maximum, the cell keeps a coarse histogram of the same
-    // value. The brightness estimate below uses a high percentile of it
+    // The brightest channel, not the darkest. Paper is neutral, so for paper
+    // the two are the same; but on pigment they are not. A printed red of
+    // (196, 44, 60) has a darkest channel of 44, so reading it that way says
+    // "this cell is very dark paper", and the lift then multiplies the whole
+    // triple by 4: red clips, the other two channels triple, and the block
+    // comes out a washed pink. A colour that is on the page is not a shadow,
+    // and the only way to tell them apart is to measure brightness on the
+    // channel that actually carries it.
+    //
+    // The brightness estimate below uses a high percentile of the histogram
     // instead of the maximum: photographed paper always carries a sprinkling
     // of specular fibre highlights, and even one per cell is enough to pin the
     // cell's paper at 255. A cell whose paper is estimated at 255 is never
     // lifted out of the shadow it is sitting in, which is exactly what leaves
     // a flat grey block behind the text on a page shaded across the text
     // column -- white margins, grey text block. Trimming the brightest few
-    // percent of a cell drops the speculars and keeps the paper. The colour
-    // estimate keeps the maximum, because a cell's brightest pixels are the
-    // ones whose colour is least contaminated by ink.
+    // percent of a cell drops the speculars and keeps the paper.
     const int cellBins = 32;
     final Int32List cellLevel = Int32List(cells);
     final Int32List cellTally = Int32List(cells * cellBins);
@@ -435,7 +573,7 @@ class ImagePipeline {
         final int b = bytes[i + 2];
         lumaSum += (r * 299 + g * 587 + b * 114) ~/ 1000;
         lumaCount++;
-        final int level = math.min(r, math.min(g, b));
+        final int level = math.max(r, math.max(g, b));
         final int index = cellRow + (x ~/ scale);
         if (level > cellLevel[index]) {
           cellLevel[index] = level;
@@ -486,7 +624,7 @@ class ImagePipeline {
         final int r = bytes[i];
         final int g = bytes[i + 1];
         final int b = bytes[i + 2];
-        if (math.min(r, math.min(g, b)) < cellLevel[index] - paperSlice) {
+        if (math.max(r, math.max(g, b)) < cellLevel[index] - paperSlice) {
           continue;
         }
         sumR[index] += r;
@@ -574,19 +712,168 @@ class ImagePipeline {
       3,
     );
 
+    // One cast for the whole page, used by [keepChroma]. The per-cell estimate
+    // above is right for a document: it takes the light out of each shadow.
+    // It is wrong for a colour page, because it cannot tell a pale tint that
+    // belongs to the paper from a cast laid over it, and correcting cell by
+    // cell erases the tint the page is made of.
+    //
+    // The light in the room is one colour, so it can be measured once -- but
+    // not by averaging the page. A cover that is mostly green has nothing but
+    // green to average, and neutralising its average turns the white label
+    // pink. What identifies the light is the *least* coloured part of the
+    // page: the label, the margin, the blank corner. Those cells define white,
+    // and everything else keeps its own relation to it.
+    double pageCastR = 1;
+    double pageCastG = 1;
+    double pageCastB = 1;
+    if (keepChroma) {
+      final List<int> saturationHistogram = List<int>.filled(101, 0);
+      int saturationCount = 0;
+      for (int i = 0; i < cells; i++) {
+        final int weight = castWeight[i];
+        if (weight <= 0) {
+          continue;
+        }
+        final int r = paperR[i];
+        final int g = paperG[i];
+        final int b = paperB[i];
+        final int hi = math.max(r, math.max(g, b));
+        if (hi <= 0) {
+          continue;
+        }
+        final int saturation = (hi - math.min(r, math.min(g, b))) * 100 ~/ hi;
+        saturationHistogram[saturation] += weight;
+        saturationCount += weight;
+      }
+      if (saturationCount > 0) {
+        final int pale = _percentile(
+          saturationHistogram,
+          saturationCount,
+          10,
+        );
+        // Among those pale cells, the brightest are the paper itself: a label
+        // reflects more light than the printed grid around it, and it is the
+        // label that has to come out white.
+        final List<int> paleLumaHistogram = List<int>.filled(256, 0);
+        int paleCount = 0;
+        for (int i = 0; i < cells; i++) {
+          final int weight = castWeight[i];
+          if (weight <= 0) {
+            continue;
+          }
+          final int r = paperR[i];
+          final int g = paperG[i];
+          final int b = paperB[i];
+          final int hi = math.max(r, math.max(g, b));
+          if (hi <= 0) {
+            continue;
+          }
+          final int saturation = (hi - math.min(r, math.min(g, b))) * 100 ~/ hi;
+          if (saturation > pale + 2) {
+            continue;
+          }
+          paleLumaHistogram[paperLuma[i].clamp(0, 255)]++;
+          paleCount++;
+        }
+        final int bright = paleCount == 0
+            ? 255
+            : _percentile(paleLumaHistogram, paleCount, 70);
+
+        double sumR = 0;
+        double sumG = 0;
+        double sumB = 0;
+        double sumW = 0;
+        for (int i = 0; i < cells; i++) {
+          final int weight = castWeight[i];
+          if (weight <= 0) {
+            continue;
+          }
+          final int r = paperR[i];
+          final int g = paperG[i];
+          final int b = paperB[i];
+          final int hi = math.max(r, math.max(g, b));
+          if (hi <= 0) {
+            continue;
+          }
+          final int saturation = (hi - math.min(r, math.min(g, b))) * 100 ~/ hi;
+          if (saturation > pale + 2 || paperLuma[i] < bright - 10) {
+            continue;
+          }
+          sumR += r * weight;
+          sumG += g * weight;
+          sumB += b * weight;
+          sumW += weight;
+        }
+        if (sumW > 0) {
+          final double r = sumR / sumW;
+          final double g = sumG / sumW;
+          final double b = sumB / sumW;
+          final double luma = (r * 299 + g * 587 + b * 114) / 1000;
+          if (luma > 20) {
+            // Partial, like the per-cell correction: a page that really is
+            // printed on cream stock should come out warm, not blue.
+            pageCastR = (1 + (luma / r - 1) * 0.8).clamp(0.88, 1.14);
+            pageCastG = (1 + (luma / g - 1) * 0.8).clamp(0.88, 1.14);
+            pageCastB = (1 + (luma / b - 1) * 0.8).clamp(0.88, 1.14);
+          }
+        }
+      }
+    }
+
     int total = 0;
     int counted = 0;
+    final List<int> backgroundHistogram = List<int>.filled(256, 0);
     for (int i = 0; i < cells; i++) {
       final int luma = background[i];
       if (luma > 1) {
         total += luma;
         counted++;
+        backgroundHistogram[luma.clamp(0, 255)]++;
       }
     }
     final int meanBackground = counted == 0 ? 200 : total ~/ counted;
 
-    // Paper should land near white, but never darken an already bright page.
-    final int target = meanBackground < 215 ? 226 : meanBackground;
+    // The level paper sits at on this page is the bright end of the
+    // distribution, not its mean. A page with a shadow across a third of it has
+    // a mean far below white, and lifting the shadow only up to that mean
+    // leaves a third of the page grey by construction -- the bigger the shadow,
+    // the more of it survives. The bright cells are the ones that are lit, so
+    // they are the ones that define what "white" is here. The 97th percentile
+    // rather than the 90th: a shadow across a fifth of the page must not drag
+    // the definition of white down with it.
+    final int paperLevel = _percentile(backgroundHistogram, counted, 97);
+
+    // Unless the bright cells are themselves coloured: then the page is a
+    // coloured subject, and there is no white to lift to. A navy cover must not
+    // be driven towards white just because its brightest channel is only 120.
+    int topR = 0;
+    int topG = 0;
+    int topB = 0;
+    int topCount = 0;
+    for (int i = 0; i < cells; i++) {
+      if (background[i] >= paperLevel && paperPeak[i] > 0) {
+        topR += paperR[i];
+        topG += paperG[i];
+        topB += paperB[i];
+        topCount++;
+      }
+    }
+    double topSaturation = 0;
+    if (topCount > 0) {
+      topR ~/= topCount;
+      topG ~/= topCount;
+      topB ~/= topCount;
+      final int hi = math.max(topR, math.max(topG, topB));
+      topSaturation = hi <= 0 ? 0 : (hi - math.min(topR, math.min(topG, topB))) / hi;
+    }
+    final bool colouredSubject = topSaturation > 0.25;
+
+    // Paper should land near the page's own white, and a page that is simply
+    // underexposed should still be brought up rather than left dark.
+    final int target = colouredSubject
+        ? paperLevel
+        : math.max(paperLevel, meanBackground < 215 ? 226 : meanBackground);
 
     // Per-cell gains, interpolated per pixel below. Applying a whole cell's
     // gain to every pixel inside it is what keeps three divisions and a square
@@ -640,13 +927,22 @@ class ImagePipeline {
       // Fading from 30 rather than 45 is what takes the warm cast out of a
       // corner shadow that the 4x lift has already brought up to near white.
       confidence *= ((bgLuma - 30) / 45).clamp(0.0, 1.0);
+      if (keepChroma) {
+        // A colour page's own tint *is* the subject. Correcting a 2 % pink
+        // because it might be the light would erase it, and that is precisely
+        // what a colour filter must not do; only a cast strong enough to be a
+        // lamp is pulled back to neutral.
+        confidence *= ((saturation - 10) / 12).clamp(0.0, 1.0);
+      }
 
       final double gR = (1 + (bgLuma / red - 1) * confidence).clamp(0.84, 1.24);
       final double gG = (1 + (bgLuma / green - 1) * confidence).clamp(0.84, 1.24);
       final double gB = (1 + (bgLuma / blue - 1) * confidence).clamp(0.84, 1.24);
-      gainR[i] = (gR * 256).round();
-      gainG[i] = (gG * 256).round();
-      gainB[i] = (gB * 256).round();
+      // The page-wide cast replaces the per-cell one for a colour page, so the
+      // tints that make up the page survive it.
+      gainR[i] = ((keepChroma ? pageCastR : gR) * 256).round();
+      gainG[i] = ((keepChroma ? pageCastG : gG) * 256).round();
+      gainB[i] = ((keepChroma ? pageCastB : gB) * 256).round();
     }
 
     final Uint8List out = Uint8List(w * h * 3);

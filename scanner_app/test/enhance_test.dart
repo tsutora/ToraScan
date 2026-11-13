@@ -1020,4 +1020,181 @@ void main() {
     expect((edge.r - edge.b).abs(), lessThan(10), reason: 'no warm fringe');
     expect((middle.r - middle.b).abs(), lessThan(10));
   });
+
+  test('auto lifts a shadow that covers much of the page', () {
+    // The target used to be the *mean* paper level, so the bigger the shadow,
+    // the lower the target, and a shadow over a third of the page was lifted
+    // only to its own average -- which is why it stayed visible. The lit cells
+    // are what define white.
+    const int w = 640;
+    const int h = 420;
+    final img.Image page = img.Image(width: w, height: h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        final double shade = x > (w * 0.55).round() ? 0.72 : 1.0;
+        page.setPixelRgb(
+          x,
+          y,
+          (232 * shade).round(),
+          (228 * shade).round(),
+          (222 * shade).round(),
+        );
+      }
+    }
+    for (int line = 0; line < 5; line++) {
+      final int top = (h * (0.12 + line * 0.16)).round();
+      img.fillRect(
+        page,
+        x1: (w * 0.10).round(),
+        y1: top,
+        x2: (w * 0.90).round(),
+        y2: top + (h * 0.02).round(),
+        color: img.ColorRgb8(44, 44, 48),
+      );
+    }
+
+    final img.Image after = img.decodeImage(
+      ImagePipeline.processPreset(img.encodeJpg(page), ScanPreset.auto),
+    )!;
+
+    final ({double r, double g, double b}) shadow = meanIn(
+      after,
+      (w * 0.64).round(),
+      (w * 0.84).round(),
+      (h * 0.30).round(),
+      (h * 0.40).round(),
+    );
+    final ({double r, double g, double b}) lit = meanIn(
+      after,
+      (w * 0.20).round(),
+      (w * 0.45).round(),
+      (h * 0.30).round(),
+      (h * 0.40).round(),
+    );
+    final double shadowLuma =
+        shadow.r * 0.299 + shadow.g * 0.587 + shadow.b * 0.114;
+    final double litLuma = lit.r * 0.299 + lit.g * 0.587 + lit.b * 0.114;
+
+    expect(
+      shadowLuma,
+      greaterThan(240),
+      reason: 'the shadow was lifted only to ${shadowLuma.toStringAsFixed(1)}',
+    );
+    expect(litLuma - shadowLuma, lessThan(8));
+  });
+
+  test('a printed colour block is not lifted as if it were a shadow', () {
+    // Paper brightness used to be read from the darkest channel of each cell.
+    // A strong red of (196, 44, 60) therefore looked like very dark paper, and
+    // the lift multiplied the whole triple by four: red clipped and the other
+    // two channels tripled, turning a red block into a washed pink one.
+    const int w = 560;
+    const int h = 420;
+    final img.Image page = img.Image(width: w, height: h);
+    img.fill(page, color: img.ColorRgb8(232, 228, 222));
+    img.fillRect(
+      page,
+      x1: (w * 0.20).round(),
+      y1: (h * 0.25).round(),
+      x2: (w * 0.80).round(),
+      y2: (h * 0.75).round(),
+      color: img.ColorRgb8(196, 44, 60),
+    );
+    for (int line = 0; line < 4; line++) {
+      final int top = (h * (0.06 + line * 0.05)).round();
+      img.fillRect(
+        page,
+        x1: (w * 0.10).round(),
+        y1: top,
+        x2: (w * 0.90).round(),
+        y2: top + 6,
+        color: img.ColorRgb8(44, 44, 48),
+      );
+    }
+
+    for (final ScanPreset preset in <ScanPreset>[
+      ScanPreset.auto,
+      ScanPreset.colour,
+    ]) {
+      final img.Image after = img.decodeImage(
+        ImagePipeline.processPreset(img.encodeJpg(page), preset),
+      )!;
+      final ({double r, double g, double b}) block = meanIn(
+        after,
+        (w * 0.35).round(),
+        (w * 0.65).round(),
+        (h * 0.40).round(),
+        (h * 0.60).round(),
+      );
+      final double hi = math.max(block.r, math.max(block.g, block.b));
+      final double lo = math.min(block.r, math.min(block.g, block.b));
+
+      expect(
+        block.r,
+        greaterThan(170),
+        reason: '${preset.label} lost the red: '
+            '${block.r.round()},${block.g.round()},${block.b.round()}',
+      );
+      expect(
+        block.b,
+        lessThan(110),
+        reason: '${preset.label} turned the red into pink: '
+            '${block.r.round()},${block.g.round()},${block.b.round()}',
+      );
+      expect((hi - lo) / hi, greaterThan(0.55));
+    }
+  });
+
+  test('colour makes a faint tint visible', () {
+    // What the colour filter is for: a tint too weak for a document filter to
+    // keep is still pigment, and it should come back strong. The paper between
+    // the patches has no tint at all, and must not gain one.
+    const int w = 600;
+    const int h = 400;
+    final img.Image page = img.Image(width: w, height: h);
+    img.fill(page, color: img.ColorRgb8(236, 235, 234));
+    for (int y = (h * 0.30).round(); y < (h * 0.70).round(); y++) {
+      for (int x = (w * 0.38).round(); x < (w * 0.62).round(); x++) {
+        page.setPixelRgb(x, y, 236, 230, 232);
+      }
+    }
+
+    double chroma(img.Image image, int x0, int x1, int y0, int y1) {
+      final ({double r, double g, double b}) mean = meanIn(
+        image,
+        x0,
+        x1,
+        y0,
+        y1,
+      );
+      final double hi = math.max(mean.r, math.max(mean.g, mean.b));
+      final double lo = math.min(mean.r, math.min(mean.g, mean.b));
+      return hi <= 0 ? 0 : (hi - lo) / hi;
+    }
+
+    final img.Image after = img.decodeImage(
+      ImagePipeline.processPreset(img.encodeJpg(page), ScanPreset.colour),
+    )!;
+
+    final int x0 = (w * 0.42).round();
+    final int x1 = (w * 0.58).round();
+    final int y0 = (h * 0.40).round();
+    final int y1 = (h * 0.60).round();
+    final double before = chroma(page, x0, x1, y0, y1);
+    final double patch = chroma(after, x0, x1, y0, y1);
+    final double paper = chroma(after, 8, w - 8, 8, (h * 0.18).round());
+
+    expect(
+      patch,
+      greaterThan(before * 1.35),
+      reason: 'the tint came back at only '
+          '${patch.toStringAsFixed(3)} from ${before.toStringAsFixed(3)}',
+    );
+    expect(
+      paper,
+      lessThan(0.02),
+      reason: 'the paper itself gained colour: '
+          '${(paper * 100).toStringAsFixed(1)} %',
+    );
+  });
 }
