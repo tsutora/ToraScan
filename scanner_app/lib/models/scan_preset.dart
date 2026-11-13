@@ -7,6 +7,10 @@ enum ScanPreset {
   // The stored id stays `auto` so existing library JSON keeps loading; only
   // the visible name changed, because "Auto" undersold what it does.
   auto('Enhanced'),
+  // Enhanced keeps printed colour, but it does flatten the light *in* the
+  // colour and boosts saturation, which is wrong for a page whose colour is
+  // the thing being scanned. Colour lifts the shadow and leaves the pigment.
+  colour('Colour'),
   lighten('Lighten'),
   grayscale('Gray'),
   blackWhite('B&W');

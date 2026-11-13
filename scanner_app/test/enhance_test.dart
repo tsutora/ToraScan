@@ -410,6 +410,194 @@ void main() {
     expect(paper.r, greaterThan(240));
   });
 
+  test('auto lifts a shadow lying along the page edge', () {
+    // A phone held over the page throws its shadow down one edge, past its own
+    // bright rim, and the sliver of paper beyond that rim is lit again. The
+    // paper inside the band has to set its own level: an estimate that always
+    // takes the brightest neighbour reaches 30 px into the band, finds the lit
+    // sliver, and decides the shadow is paper -- which is how a grey stripe
+    // survives down the edge of an otherwise white page.
+    const int w = 800;
+    const int h = 1000;
+    final img.Image page = img.Image(width: w, height: h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        final double fx = x / (w - 1);
+        double shade = 1;
+        if (fx > 0.60 && fx < 0.86) {
+          // The penumbra, deepest just inside the rim.
+          final double t = (fx - 0.60) / 0.26;
+          shade = 1 - 0.30 * math.sin(t * math.pi);
+        }
+        page.setPixelRgb(
+          x,
+          y,
+          (228 * shade).round(),
+          (225 * shade).round(),
+          (219 * shade).round(),
+        );
+      }
+    }
+    // Some ink, so the tone map has a black point to anchor to; without it a
+    // blank page is deliberately left where the flatten put it.
+    for (int line = 0; line < 6; line++) {
+      final int top = (h * (0.10 + line * 0.14)).round();
+      img.fillRect(
+        page,
+        x1: (w * 0.08).round(),
+        y1: top,
+        x2: (w * 0.55).round(),
+        y2: top + (h * 0.015).round(),
+        color: img.ColorRgb8(44, 44, 48),
+      );
+    }
+
+    final img.Image after = img.decodeImage(
+      ImagePipeline.processPreset(img.encodeJpg(page), ScanPreset.auto),
+    )!;
+
+    final band = meanIn(after, (w * 0.70).round(), (w * 0.82).round(), 300, 700);
+    final lit = meanIn(after, (w * 0.30).round(), (w * 0.50).round(), 300, 700);
+    final double bandLuma = band.r * 0.299 + band.g * 0.587 + band.b * 0.114;
+    final double litLuma = lit.r * 0.299 + lit.g * 0.587 + lit.b * 0.114;
+
+    expect(
+      bandLuma,
+      greaterThan(240),
+      reason: 'the shadow along the edge is still there: '
+          '${bandLuma.toStringAsFixed(1)}',
+    );
+    expect(
+      litLuma - bandLuma,
+      lessThan(8),
+      reason: 'the shadowed band is '
+          '${(litLuma - bandLuma).toStringAsFixed(1)} levels darker',
+    );
+  });
+
+  test('colour keeps pigment as saturated in a shadow as in the light', () {
+    // The whole point of the colour filter: a page whose colour is the subject.
+    // Enhanced lifts a shadow's brightness more than its chroma, which is
+    // right for a document but leaves the same ink looking washed out on the
+    // shaded half. Colour scales both by the same factor, so a block keeps its
+    // place on the hue wheel and its strength across the shadow boundary.
+    const int w = 640;
+    const int h = 480;
+    final img.Image page = img.Image(width: w, height: h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        final double shade = x < w ~/ 2 ? 1 : 0.55;
+        final bool block =
+            x > (w * 0.15).round() &&
+            x < (w * 0.85).round() &&
+            y > (h * 0.30).round() &&
+            y < (h * 0.70).round();
+        final int r = ((block ? 196 : 232) * shade).round();
+        final int g = ((block ? 44 : 228) * shade).round();
+        final int b = ((block ? 60 : 221) * shade).round();
+        page.setPixelRgb(x, y, r, g, b);
+      }
+    }
+
+    double saturation(img.Image image, int x0, int x1) {
+      final ({double r, double g, double b}) mean =
+          meanIn(image, x0, x1, (h * 0.40).round(), (h * 0.60).round());
+      final double hi = math.max(mean.r, math.max(mean.g, mean.b));
+      final double lo = math.min(mean.r, math.min(mean.g, mean.b));
+      return hi <= 0 ? 0 : (hi - lo) / hi;
+    }
+
+    final img.Image enhanced = img.decodeImage(
+      ImagePipeline.processPreset(img.encodeJpg(page), ScanPreset.auto),
+    )!;
+    final img.Image colour = img.decodeImage(
+      ImagePipeline.processPreset(img.encodeJpg(page), ScanPreset.colour),
+    )!;
+
+    final double enhancedGap =
+        (saturation(enhanced, 60, 200) - saturation(enhanced, 440, 580)).abs();
+    final double colourGap =
+        (saturation(colour, 60, 200) - saturation(colour, 440, 580)).abs();
+
+    expect(
+      saturation(colour, 440, 580),
+      greaterThan(0.30),
+      reason: 'the shadowed half of the block must stay a strong red',
+    );
+    expect(
+      colourGap,
+      lessThan(0.09),
+      reason: 'colour drifted across the shadow boundary by '
+          '${colourGap.toStringAsFixed(3)} '
+          '(enhanced: ${enhancedGap.toStringAsFixed(3)})',
+    );
+    expect(
+      colourGap,
+      lessThan(enhancedGap * 0.7),
+      reason: 'colour should drift clearly less than enhanced: '
+          '${colourGap.toStringAsFixed(3)} vs '
+          '${enhancedGap.toStringAsFixed(3)}',
+    );
+  });
+
+  test('auto does not boost the colour of the paper itself', () {
+    // White paper is never neutral: light, sensor and the stock all leave a
+    // few levels of chroma, and it varies across the page. Expanding chroma
+    // wherever it exists turns that variation into coloured clouds, which is
+    // what made a plain white cover look stained. Paper must come out no more
+    // coloured than it went in; only pigment is allowed to grow.
+    const int w = 640;
+    const int h = 480;
+    final img.Image page = img.Image(width: w, height: h);
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        final double mottle =
+            math.sin(x / 47 * 2 * math.pi) * math.sin(y / 61 * 2 * math.pi);
+        final int dr = (7 * mottle).round();
+        page.setPixelRgb(x, y, 236 + dr, 230, 224 - dr);
+      }
+    }
+    for (int line = 0; line < 6; line++) {
+      final int top = (h * (0.10 + line * 0.14)).round();
+      img.fillRect(
+        page,
+        x1: (w * 0.10).round(),
+        y1: top,
+        x2: (w * 0.90).round(),
+        y2: top + (h * 0.02).round(),
+        color: img.ColorRgb8(44, 44, 48),
+      );
+    }
+
+    final img.Image after = img.decodeImage(
+      ImagePipeline.processPreset(img.encodeJpg(page), ScanPreset.auto),
+    )!;
+
+    // Paper between two of the text lines, away from the bars.
+    double chroma(img.Image image) {
+      double sum = 0;
+      int n = 0;
+      for (int y = (h * 0.26).round(); y < (h * 0.36).round(); y += 2) {
+        for (int x = (w * 0.20).round(); x < (w * 0.80).round(); x += 2) {
+          final img.Pixel p = image.getPixel(x, y);
+          sum += (p.r - p.b).abs();
+          n++;
+        }
+      }
+      return sum / n;
+    }
+
+    final double before = chroma(page);
+    final double got = chroma(after);
+
+    expect(
+      got,
+      lessThan(before * 1.02),
+      reason: 'paper chroma grew from '
+          '${before.toStringAsFixed(1)} to ${got.toStringAsFixed(1)}',
+    );
+  });
+
   test('toneMap expands chroma around the pixel luminance', () {
     // CamScanner's colour pass maps each channel to Y + 1.5 * (C - Y), which
     // is a pure saturation boost: hue is untouched, only its distance from the
@@ -635,8 +823,8 @@ void main() {
     // behind the text stays grey, which reads as a shadow pasted behind the
     // letters. The level has to come from a high percentile of the cell, not
     // its brightest pixel.
-    const int w = 480;
-    const int h = 640;
+    const int w = 960;
+    const int h = 1280;
     final img.Image page = img.Image(width: w, height: h);
     final math.Random random = math.Random(11);
     for (int y = 0; y < h; y++) {

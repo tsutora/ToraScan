@@ -83,6 +83,7 @@ class ImagePipeline {
     final img.Image result = switch (preset) {
       ScanPreset.none => image,
       ScanPreset.auto => auto(image),
+      ScanPreset.colour => colour(image),
       ScanPreset.lighten => lighten(image),
       ScanPreset.grayscale => gray(image),
       ScanPreset.blackWhite => blackWhite(image),
@@ -106,6 +107,22 @@ class ImagePipeline {
     img.Image out = flattenIllumination(src);
     out = toneMap(out, whitePoint: 236, saturation: 1.5);
     return sharpen(out, asymmetric: true);
+  }
+
+  /// Shadow removal that keeps the pigment exactly as it was on the paper.
+  ///
+  /// [auto] is a document filter: it pushes the paper to white and expands
+  /// colour, which is right for a receipt but wrong for a coloured cover, a
+  /// stamp, a form printed in spot colour, or a photograph of a page with a
+  /// tinted stock. This one still lifts the shadow (the paper is paper, and
+  /// the light on it is not), but it scales chroma by the same factor as
+  /// luminance instead of holding it back, and it does not expand saturation
+  /// afterwards. A pink form comes out the pink it is, and paper texture is
+  /// never turned into coloured clouds.
+  static img.Image colour(img.Image src) {
+    img.Image out = flattenIllumination(src, keepChroma: true);
+    out = toneMap(out, whitePoint: 236);
+    return sharpen(out, amount: 0.35, asymmetric: true);
   }
 
   /// For dark captures and grey paper: like [auto], biased brighter.
@@ -368,6 +385,9 @@ class ImagePipeline {
     img.Image src, {
     int scale = 16,
     int paperRank = 95,
+    int spread = 2,
+    int smooth = 2,
+    bool keepChroma = false,
   }) {
     final int w = src.width;
     final int h = src.height;
@@ -442,7 +462,7 @@ class ImagePipeline {
       for (int bin = cellBins - 1; bin >= 0; bin--) {
         above += cellTally[base + bin];
         if (above > cut) {
-          level = (bin << 3) + 7;
+          level = (bin << 3) + 3;
           break;
         }
       }
@@ -489,14 +509,27 @@ class ImagePipeline {
           (paperR[i] * 299 + paperG[i] * 587 + paperB[i] * 114) ~/ 1000;
     }
 
-    // Brightness: a small dilation makes the estimate monotone across ink, then
-    // a blur removes the blockiness of the downsampled grid.
-    final Int32List background = _boxBlurInt(
-      _dilateInt(paperPeak, sw, sh, 2),
-      sw,
-      sh,
-      2,
-    );
+    // Brightness. A dilated estimate is monotone across ink, which is what
+    // keeps a solid black block from being lifted into a grey halo, but taken
+    // everywhere it also drags a *brighter* neighbour into a shadow: a phone
+    // shadow lying along the page edge, with a lit sliver of paper beyond it,
+    // comes back as a grey band because the estimate inside the band is taken
+    // from the sliver 32 px away. So the dilation is only trusted where the
+    // cell is genuinely darker than its surroundings -- ink and pigment.
+    //
+    // "Darker than its surroundings" is measured against the brightest paper
+    // within a much wider reach than the fill radius: a shadow is wide and an
+    // ink stroke is narrow, so a wide reference tells the two apart. Open paper
+    // keeps its own level, shadow and all, and the following blur then only
+    // has to round off the cell grid.
+    final Int32List wide = _dilateInt(paperPeak, sw, sh, 4);
+    final Int32List filled = _dilateInt(paperPeak, sw, sh, spread);
+    final Int32List local = Int32List(cells);
+    for (int i = 0; i < cells; i++) {
+      final bool dark = wide[i] > 0 && paperPeak[i] * 100 < wide[i] * 55;
+      local[i] = dark ? filled[i] : paperPeak[i];
+    }
+    final Int32List background = _boxBlurInt(local, sw, sh, smooth);
 
     // Colour: no dilation (that would pull one channel from a neighbour's
     // pigment and invent a colour), a wider blur, and a vote weighted by how
@@ -579,7 +612,12 @@ class ImagePipeline {
       // to coloured blotches on what should be grey paper. The extra 0.6 power
       // plus a hard 1.9 cap means the deepest shadow still gains brightness
       // without gaining enough colour gain to make noise visible.
-      final double chromaFactor = factor <= 1
+      //
+      // [keepChroma] is for a page whose colour is the subject: then the
+      // pigment in a shadow has to brighten with the paper, or lifting the
+      // shadow leaves every colour in it darker and duller than the same
+      // colour in the lit part of the page.
+      final double chromaFactor = factor <= 1 || keepChroma
           ? factor
           : math.min(math.pow(factor, 0.6).toDouble(), 1.9);
       chromaLift[i] = (chromaFactor * 256).round();
@@ -863,8 +901,15 @@ class ImagePipeline {
           // shadowed area from turning into coloured blotches: a real colour
           // block or a pink form is far past this threshold and still gets the
           // full 1.5x.
+          //
+          // The ramp starts well above zero because paper is never neutral: a
+          // capture of white paper carries several levels of chroma from the
+          // light, the sensor and its own texture, and starting the expansion
+          // at 6 turned those few levels into the coloured clouds that made a
+          // plain cover look stained. Ink and pigment sit far beyond 40, so
+          // they still get the whole 1.5x.
           final int peakChroma = math.max(up, down);
-          final double presence = ((peakChroma - 6) / 12).clamp(0.0, 1.0);
+          final double presence = ((peakChroma - 16) / 24).clamp(0.0, 1.0);
           double factor = 1 + (saturation - 1) * presence;
           final int lumaRound = luma.round();
           if (up > 0) {
@@ -1171,16 +1216,22 @@ class ImagePipeline {
 
   /// How much a background colour may be trusted as light rather than pigment.
   ///
-  /// The same test as [_isPigment], but continuous. A hard threshold applied to
-  /// a noisy per-cell estimate turns noise into structure: neighbouring cells
-  /// land on opposite sides of it and the shadow comes out blotchy. Fading the
-  /// correction out over ten levels instead makes that impossible.
+  /// This used to measure only how far red and blue sat *above green*, which
+  /// is the shape of a magenta pigment -- but it is also the shape of a page
+  /// under a pink or tungsten light, and a cyan cast was never penalised at
+  /// all. A pink-lit page therefore kept its cast forever while a cyan-lit one
+  /// was corrected, which is why a white cover could come back with pink
+  /// clouds on one side. Saturation is symmetric and still separates the two:
+  /// light, paper and cream sit under 10 %, while printed pink, gold or a
+  /// coloured form are far past 16 %.
   static double _pigmentConfidence(int r, int g, int b) {
-    final int excess = math.max(
-      math.min(r - g, b - g),
-      math.min(g - r, g - b),
-    );
-    return 1 - ((excess - 2) / 10).clamp(0.0, 1.0);
+    final int hi = math.max(r, math.max(g, b));
+    final int lo = math.min(r, math.min(g, b));
+    if (hi <= 1) {
+      return 1;
+    }
+    final double saturation = (hi - lo) / hi;
+    return 1 - ((saturation - 0.08) / 0.12).clamp(0.0, 1.0);
   }
 
   static double _balance(double target, double mean, double strength) {
