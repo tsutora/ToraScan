@@ -490,13 +490,13 @@ class ImagePipeline {
   /// background down — that is what leaves white halos around text blocks in a
   /// naive implementation. The grid is coarse on purpose.
   ///
-  /// "Most representative" is a [paperRank] percentile of the cell, not its
-  /// brightest pixel, because paper sparkles: a phone camera records the
-  /// specular reflections of the paper's fibres, and a handful of near-white
-  /// pixels per cell is enough to pin a maximum-based estimate at white. A
-  /// page shaded across the text column then keeps its shadow in exactly the
-  /// shape of the text block — white margins, grey behind the letters — while
-  /// a percentile estimate still sees the paper underneath and lifts it.
+  /// "Most representative" is the brightest *substantial* cluster of the cell,
+  /// not its brightest pixel, because paper sparkles: a phone camera records
+  /// the specular reflections of the paper's fibres, and a handful of near-white
+  /// pixels per cell is enough to pin a maximum-based estimate at white. A page
+  /// shaded across the text column then keeps its shadow in exactly the shape
+  /// of the text block -- white margins, grey behind the letters -- while the
+  /// cluster estimate still sees the paper underneath and lifts it.
   ///
   /// The estimate is built from the mean *colour* of those bright pixels, not
   /// from three independent per-channel maxima. Taking the maximum of each
@@ -518,7 +518,6 @@ class ImagePipeline {
   static img.Image flattenIllumination(
     img.Image src, {
     int scale = 16,
-    int paperRank = 65,
     int spread = 2,
     int smooth = 2,
     bool keepChroma = false,
@@ -584,6 +583,7 @@ class ImagePipeline {
     final int grey = lumaCount == 0 ? 200 : (lumaSum / lumaCount).round();
 
     final Int32List paperPeak = Int32List(cells);
+    final Int32List paperBin = Int32List(cells);
     for (int index = 0; index < cells; index++) {
       final int peak = cellLevel[index];
       if (peak == 0) {
@@ -594,27 +594,56 @@ class ImagePipeline {
       for (int bin = 0; bin < cellBins; bin++) {
         total += cellTally[base + bin];
       }
-      final int cut = total * paperRank ~/ 100;
-      int above = 0;
-      int level = peak;
+      // The brightest *substantial* cluster in the cell, not the most common
+      // one and not the brightest pixel. Paper wins over ink whatever the ink
+      // coverage is, because paper is the brighter of the two; but a handful
+      // of specular fibre highlights is not a cluster and is passed over.
+      //
+      // This is the difference between a clean page and a white glow around
+      // the text. A percentile that lands on ink reads the cell as dark paper
+      // and multiplies its background by three: the gaps between letters blow
+      // out to white while the margin beside them stays grey, which is exactly
+      // what "a white shadow around the text" looks like.
+      final int minShare = math.max(1, total * 10 ~/ 100);
+      int paperBinIndex = -1;
       for (int bin = cellBins - 1; bin >= 0; bin--) {
-        above += cellTally[base + bin];
-        if (above > cut) {
-          level = (bin << 3) + 3;
+        if (cellTally[base + bin] >= minShare) {
+          paperBinIndex = bin;
           break;
         }
       }
-      paperPeak[index] = math.min(peak, level);
+      if (paperBinIndex < 0) {
+        // No cluster at all -- a smooth gradient across the cell, or flat
+        // paper whose noise has spread it over every bin. A low percentile
+        // from the top sees the paper there and the speculars are one or two
+        // pixels, so they cannot pin it.
+        final int cut = total * 65 ~/ 100;
+        int above = 0;
+        paperBinIndex = 0;
+        for (int bin = cellBins - 1; bin >= 0; bin--) {
+          above += cellTally[base + bin];
+          if (above > cut) {
+            paperBinIndex = bin;
+            break;
+          }
+        }
+      }
+      paperBin[index] = paperBinIndex;
     }
 
     // Pass 2: mean RGB of the pixels within [paperSlice] levels of the cell's
     // brightest one. Averaging whole triples keeps the estimate a colour the
-    // paper really has, and drops the noise by sqrt(n).
+    // paper really has, and drops the noise by sqrt(n). The same pass averages
+    // the brightness of the pixels in the modal bin and its neighbours, so the
+    // level is a real value from the paper rather than the centre of an
+    // eight-level bin.
     const int paperSlice = 10;
     final Int32List sumR = Int32List(cells);
     final Int32List sumG = Int32List(cells);
     final Int32List sumB = Int32List(cells);
     final Int32List votes = Int32List(cells);
+    final Int32List peakSum = Int32List(cells);
+    final Int32List peakVotes = Int32List(cells);
     for (int y = 0; y < h; y++) {
       final int row = y * stride;
       final int cellRow = (y ~/ scale) * sw;
@@ -624,7 +653,13 @@ class ImagePipeline {
         final int r = bytes[i];
         final int g = bytes[i + 1];
         final int b = bytes[i + 2];
-        if (math.max(r, math.max(g, b)) < cellLevel[index] - paperSlice) {
+        final int level = math.max(r, math.max(g, b));
+        final int offset = (level >> 3) - paperBin[index];
+        if (offset >= -1 && offset <= 1) {
+          peakSum[index] += level;
+          peakVotes[index]++;
+        }
+        if (level < cellLevel[index] - paperSlice) {
           continue;
         }
         sumR[index] += r;
@@ -632,6 +667,15 @@ class ImagePipeline {
         sumB[index] += b;
         votes[index]++;
       }
+    }
+
+    for (int i = 0; i < cells; i++) {
+      // Every cell has pixels in its modal bin by construction, but a cell that
+      // fell entirely into one bin and lost it to the neighbours must still get
+      // a level.
+      paperPeak[i] = peakVotes[i] == 0
+          ? math.min(cellLevel[i], (paperBin[i] << 3) + 3)
+          : peakSum[i] ~/ peakVotes[i];
     }
 
     final Int32List paperR = Int32List(cells);
@@ -1384,7 +1428,14 @@ class ImagePipeline {
             detail ~/= 2;
           }
         }
-        final int delta = detail * amount256 ~/ 256;
+        int delta = detail * amount256 ~/ 256;
+        if (delta > 0 && centre > 200) {
+          // Never brighten paper towards white. The light side of an ink stroke
+          // always has positive detail, and adding even half of it is what
+          // leaves a one-pixel white rim around every letter -- a glow around
+          // the text, seen against paper that is not quite that white.
+          delta = delta * (255 - centre) ~/ 55;
+        }
         final int i = row + x * 3;
         final int dest = outRow + x * 3;
         out[dest] = (bytes[i] + delta).clamp(0, 255);
